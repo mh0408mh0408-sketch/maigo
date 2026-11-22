@@ -131,8 +131,8 @@ class MaigoGameEngine {
       state.players.forEach(p => { p.role = 'normal'; });
     }
 
-    // 2. 山札生成と初期手札配布（2人プレイ時は6枚、3人以上は4枚）
-    const handSize = playerCount === 2 ? 6 : 4;
+    // 2. 山札生成と初期手札配布（初期手札は5枚）
+    const handSize = 5;
     let redrawCount = 0;
     let validDeal = false;
 

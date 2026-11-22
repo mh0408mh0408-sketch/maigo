@@ -593,6 +593,11 @@ button:disabled {
   flex-shrink: 0;
 }
 
+.wp-info {
+  flex: 1;
+  min-width: 0;
+}
+
 .wp-name {
   font-weight: 700;
   font-size: 0.9rem;
@@ -601,6 +606,50 @@ button:disabled {
 .wp-char {
   font-size: 0.76rem;
   color: var(--text-muted);
+}
+
+.btn-kick-player {
+  padding: 5px 10px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: rgba(153, 27, 27, 0.35);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.55);
+  border-radius: 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.btn-kick-player:hover {
+  background: #dc2626;
+  color: #fff;
+  box-shadow: 0 0 10px rgba(220, 38, 38, 0.6);
+}
+
+.pr-player-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(30, 41, 59, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-right: 4px;
+  margin-top: 2px;
+  color: #e2e8f0;
+}
+
+.pr-chip-kick, .opp-kick-btn {
+  padding: 1px 5px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  background: rgba(185, 28, 28, 0.4);
+  color: #fecaca;
+  border: 1px solid rgba(239, 68, 68, 0.55);
+  border-radius: 3px;
+}
+.pr-chip-kick:hover, .opp-kick-btn:hover {
+  background: #dc2626;
+  color: #fff;
 }
 
 .cpu-tag, .human-tag {
@@ -2091,3 +2140,452 @@ button:disabled {
 }
 .cci-desc { font-size: 0.76rem; color: #cbd5e1; margin-top: 4px; line-height: 1.35; }
 .cci-flavor { font-size: 0.7rem; color: #94a3b8; font-style: italic; margin-top: 3px; }
+
+/* ============================================================================
+   スマホ・タブレット完全ノンスクロール設計（1画面完結プレイ対応）
+   ============================================================================ */
+.live-log-ticker {
+  display: none;
+}
+.mobile-log-btn,
+.mobile-only-close {
+  display: none;
+}
+
+/* ゲーム進行中は画面全体を100dvhに固定してページ縦スクロールを不要化 */
+body.in-game-locked {
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+}
+
+body.in-game-locked #app-root {
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+}
+
+body.in-game-locked #game-screen {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+@media (max-width: 980px) {
+  .mobile-log-btn,
+  .mobile-only-close {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .live-log-ticker {
+    display: block;
+    font-size: 0.73rem;
+    color: #fde68a;
+    background: rgba(15, 23, 42, 0.85);
+    border: 1px solid rgba(245, 158, 11, 0.25);
+    border-radius: 5px;
+    padding: 3px 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .center-table-area {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .table-main-board {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* スマホ・タブレットではログパネルはポップアップドロワー化して画面高さを圧迫しない */
+  .game-log-panel {
+    display: none;
+    position: fixed;
+    inset: 12% 4% 12% 4%;
+    max-height: none;
+    z-index: 80;
+    background: rgba(8, 12, 22, 0.97);
+    border: 1.5px solid #f59e0b;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.9);
+  }
+  .game-log-panel.mobile-open {
+    display: flex;
+  }
+  .log-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
+@media (max-width: 768px) {
+  .hide-on-mobile {
+    display: none !important;
+  }
+
+  /* 1. トップヘッダー＆ゲーム情報バーの省スペース化 */
+  body.in-game-locked .top-header {
+    padding: 4px 10px;
+    min-height: 34px;
+    flex-shrink: 0;
+  }
+  body.in-game-locked .brand-kanji {
+    font-size: 1.15rem;
+  }
+  body.in-game-locked .brand-sub {
+    display: none;
+  }
+  body.in-game-locked .top-header .btn-sm {
+    padding: 3px 8px;
+    font-size: 0.72rem;
+  }
+
+  body.in-game-locked #game-screen {
+    padding: 4px 6px 6px;
+    gap: 5px;
+  }
+
+  .game-top-bar {
+    padding: 4px 8px;
+    gap: 4px;
+    border-radius: 7px;
+    flex-shrink: 0;
+  }
+  .hud-badges-left, .hud-badges-right {
+    gap: 4px;
+  }
+  .hud-badge {
+    padding: 2px 7px;
+    font-size: 0.7rem;
+    border-radius: 4px;
+  }
+  .game-top-bar .btn-sm {
+    padding: 2px 7px;
+    font-size: 0.7rem;
+  }
+
+  /* 2. 他プレイヤー一覧：縦並びではなく横1列のコンパクトストリップ化 */
+  .opponents-grid {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 6px;
+    flex-shrink: 0;
+    padding-bottom: 2px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .opponent-card {
+    flex: 1 0 128px;
+    min-width: 128px;
+    max-width: 185px;
+    padding: 5px 7px;
+    border-radius: 7px;
+  }
+  .relation-badge {
+    font-size: 0.62rem;
+    padding: 1px 5px;
+    margin-bottom: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+  .opp-header {
+    gap: 6px;
+  }
+  .opp-avatar {
+    width: 28px;
+    height: 28px;
+  }
+  .opp-name {
+    font-size: 0.76rem;
+  }
+  .opp-char-title {
+    display: none;
+  }
+  .role-pill {
+    font-size: 0.6rem;
+    padding: 1px 4px;
+  }
+  .opponent-card .life-orbs-track {
+    padding: 1px 5px;
+    gap: 2px;
+  }
+  .opponent-card .life-orb {
+    width: 7px;
+    height: 7px;
+  }
+  .opponent-card .life-num {
+    font-size: 0.64rem;
+  }
+  .opp-hand-bar {
+    margin-top: 3px;
+    padding-top: 3px;
+    font-size: 0.68rem;
+  }
+  .opp-mini-card {
+    width: 9px;
+    height: 13px;
+  }
+  .opp-fx-row {
+    margin-top: 2px;
+    gap: 3px;
+  }
+  .fx-pill {
+    font-size: 0.6rem;
+    padding: 1px 4px;
+  }
+  .opp-turn-indicator,
+  .opp-finished-banner {
+    margin-top: 3px;
+    padding: 2px 4px;
+    font-size: 0.64rem;
+  }
+
+  /* 3. 中央ステージ：手順1（右隣から引く）と山札・捨て札を残り高さに自動フィット */
+  .table-main-board {
+    padding: 6px 8px;
+    gap: 4px;
+    min-height: 0;
+    border-radius: 8px;
+    justify-content: space-between;
+  }
+
+  .turn-banner {
+    padding: 5px 8px;
+    font-size: 0.74rem;
+    line-height: 1.28;
+    border-radius: 6px;
+    flex-shrink: 0;
+  }
+
+  /* 手順1で右隣の裏向きカードを引く時は山札・捨て札展示を一時折りたたみ、カード選択を画面中央に大きく表示 */
+  .table-main-board.step1-active .deck-discard-showcase {
+    display: none;
+  }
+
+  #step1-draw-stage {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .step1-draw-box {
+    flex: 1;
+    min-height: 0;
+    padding: 6px 8px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .step1-title {
+    font-size: 0.74rem;
+    margin-bottom: 6px;
+  }
+
+  .facedown-cards-fan {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 4px 2px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .facedown-pick-card {
+    width: 68px;
+    height: 94px;
+    flex-shrink: 0;
+    margin: 0 auto;
+  }
+  .facedown-pick-card:hover:not(:disabled) {
+    transform: translateY(-4px) scale(1.03);
+  }
+  .fd-pattern {
+    font-size: 0.9rem;
+    padding: 3px 4px;
+  }
+  .fd-num, .fd-badge {
+    font-size: 0.58rem;
+  }
+
+  .deck-discard-showcase {
+    flex: 1;
+    min-height: 0;
+    gap: 20px;
+    padding: 2px 0;
+  }
+  .deck-stack-visual,
+  .mini-discard-card,
+  .empty-discard-slot {
+    width: 62px;
+    height: 84px;
+  }
+  .deck-stack-kanji {
+    font-size: 0.95rem;
+  }
+  .mdc-name, .pile-label {
+    font-size: 0.64rem;
+  }
+
+  /* 4. 下部：自分のステータス・アクションボタン・横1列の手札カルーセル */
+  .my-player-area {
+    padding: 6px 8px;
+    gap: 4px;
+    border-radius: 9px;
+    flex-shrink: 0;
+  }
+
+  .my-top-status-row {
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+  .my-avatar-wrap {
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
+  }
+  .my-name {
+    font-size: 0.8rem;
+  }
+  .my-char-name {
+    display: none;
+  }
+  .my-player-area .life-orbs-track {
+    padding: 2px 6px;
+    gap: 2px;
+  }
+  .my-player-area .life-orb {
+    width: 8px;
+    height: 8px;
+  }
+  .my-player-area .life-num {
+    font-size: 0.66rem;
+  }
+
+  .danger-banner {
+    min-width: 0;
+    flex: 1;
+    padding: 4px 7px;
+    font-size: 0.68rem;
+    line-height: 1.22;
+    border-radius: 6px;
+  }
+
+  .my-play-action-bar {
+    min-height: 28px;
+    gap: 6px;
+  }
+  .my-play-action-bar button {
+    padding: 6px 11px;
+    font-size: 0.76rem;
+  }
+  .play-hint-text {
+    font-size: 0.7rem;
+  }
+  .self-bad-warning {
+    font-size: 0.66rem;
+    padding: 3px 6px;
+  }
+
+  /* 自分の手札：複数段折り返しを廃止し、横1列に並べて縦スクロールを完全ゼロにする */
+  .my-hand-cards {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 10px 4px 2px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .game-card {
+    width: 114px;
+    min-width: 114px;
+    min-height: 152px;
+    max-height: 162px;
+    padding: 6px;
+    flex-shrink: 0;
+    margin: 0 auto;
+    border-radius: 8px;
+  }
+  .game-card:hover:not(.not-playable) {
+    transform: translateY(-5px) scale(1.02);
+  }
+  .game-card.is-selected {
+    transform: translateY(-8px) scale(1.03);
+  }
+
+  .card-cat-pill, .card-action-tag {
+    font-size: 0.58rem;
+    padding: 1px 4px;
+  }
+  .card-title-row {
+    font-size: 0.78rem;
+    margin-bottom: 2px;
+  }
+  .card-illustration {
+    height: 46px;
+    margin-bottom: 3px;
+  }
+  .card-desc-box {
+    font-size: 0.62rem;
+    line-height: 1.22;
+    padding: 4px;
+    overflow-y: auto;
+  }
+
+  /* 5. モーダル＆カットインのスマホ画面フィット */
+  .modal-box {
+    padding: 14px;
+    max-height: 92dvh;
+    display: flex;
+    flex-direction: column;
+  }
+  .modal-title {
+    font-size: 1rem;
+    margin-bottom: 6px;
+  }
+  .modal-desc {
+    font-size: 0.78rem;
+    margin-bottom: 10px;
+  }
+  .modal-cards-grid {
+    gap: 8px;
+    margin-bottom: 10px;
+    overflow-y: auto;
+  }
+  .modal-pick-card {
+    width: 102px;
+    padding: 6px;
+  }
+  .mpc-title {
+    font-size: 0.76rem;
+  }
+  .mpc-art {
+    height: 52px;
+  }
+  .modal-actions {
+    position: sticky;
+    bottom: 0;
+    background: #0d1322;
+    padding-top: 8px;
+    margin-top: auto;
+  }
+}

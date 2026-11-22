@@ -82,6 +82,16 @@ class MaigoApp {
       document.getElementById('discard-modal')?.classList.add('hidden');
     });
 
+    // スマホ用ログドロワー開閉
+    const toggleMobileLog = () => {
+      document.getElementById('game-log-panel')?.classList.toggle('mobile-open');
+    };
+    document.getElementById('btn-toggle-mobile-log')?.addEventListener('click', toggleMobileLog);
+    document.getElementById('live-log-ticker')?.addEventListener('click', toggleMobileLog);
+    document.getElementById('btn-close-mobile-log')?.addEventListener('click', () => {
+      document.getElementById('game-log-panel')?.classList.remove('mobile-open');
+    });
+
     // ロビーボタン
     document.getElementById('btn-quick-solo')?.addEventListener('click', () => this.startLocalSetupRoom());
     document.getElementById('btn-create-online')?.addEventListener('click', () => this.createOnlineRoom());
@@ -249,7 +259,16 @@ class MaigoApp {
       const statusBadge = isPlaying
         ? `<span class="room-status-pill playing">進行中 (R${r.gameState?.currentRound || 1})</span>`
         : `<span class="room-status-pill waiting">待機中 (${pList.length}人)</span>`;
-      const humanNamesText = humanPlayers.map(p => this.escapeHTML(p.name)).join('・');
+      const humanChipsHTML = humanPlayers.map(p => `
+        <span class="pr-player-chip">
+          ${this.escapeHTML(p.name)}
+          <button type="button" class="pr-chip-kick"
+            data-lobby-kick-room="${this.escapeHTML(r.roomId)}"
+            data-lobby-kick-pid="${this.escapeHTML(p.id)}"
+            data-lobby-kick-name="${this.escapeHTML(p.name)}"
+            title="「${this.escapeHTML(p.name)}」をこの部屋から追放する">×追放</button>
+        </span>
+      `).join('');
 
       let btnLabel = isPlaying ? '名前一致で復帰' : '参加する';
       let btnClass = 'btn-secondary btn-sm';
@@ -267,7 +286,7 @@ class MaigoApp {
               <span class="pr-meta">${modeLabel}</span>
             </div>
             <div class="pr-participants">
-              参加者: ${humanNamesText || 'なし'}
+              参加者: ${humanChipsHTML || 'なし'}
               ${nameMatchedPlayer ? '<span class="match-hint">（★名前一致！復帰可能）</span>' : ''}
             </div>
           </div>
@@ -281,6 +300,75 @@ class MaigoApp {
         this.joinOnlineRoom(btn.dataset.joinCode);
       });
     });
+
+    listEl.querySelectorAll('[data-lobby-kick-room]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.kickPlayerFromLobbyRoom(
+          btn.dataset.lobbyKickRoom,
+          btn.dataset.lobbyKickPid,
+          btn.dataset.lobbyKickName
+        );
+      });
+    });
+  }
+
+  async kickPlayerFromLobbyRoom(roomId, targetPid, targetName) {
+    if (!window.firebaseDB) return;
+    if (!confirm(`部屋番号「${roomId}」からプレイヤー「${targetName}」を追放しますか？`)) {
+      return;
+    }
+    try {
+      const { db, ref, get, set, remove } = window.firebaseDB;
+      const roomRef = ref(db, `maigo_rooms/${roomId}`);
+      const snap = await get(roomRef);
+      if (!snap.exists()) return;
+      const data = snap.val();
+      let roomPlayers = Array.isArray(data.players) ? data.players : Object.values(data.players || {});
+
+      if (data.status === 'WAITING') {
+        roomPlayers = roomPlayers.filter(p => p.id !== targetPid);
+        const remainingHumans = roomPlayers.filter(p => !p.isCpu);
+        if (roomPlayers.length === 0 || remainingHumans.length === 0) {
+          await remove(roomRef);
+          this.showToastNotification(`🚫 「${targetName}」を追放し、空になった部屋「${roomId}」を閉じました。`);
+          return;
+        }
+        if (data.hostId === targetPid) {
+          data.hostId = remainingHumans[0].id;
+          data.hostName = remainingHumans[0].name;
+        }
+        data.players = roomPlayers;
+        data.updatedAt = Date.now();
+        await set(roomRef, data);
+      } else if (data.gameState) {
+        window.MaigoGameEngine.normalizeState(data.gameState);
+        const gp = data.gameState.players.find(p => p.id === targetPid);
+        if (gp) {
+          gp.isCpu = true;
+          gp.name = `${gp.name} (CPU代走)`;
+          gp.id = `cpu_kicked_${Date.now()}`;
+        }
+        roomPlayers = roomPlayers.filter(p => p.id !== targetPid);
+        const remainingHumans = data.gameState.players.filter(p => !p.isCpu);
+        if (remainingHumans.length === 0) {
+          await remove(roomRef);
+          this.showToastNotification(`🚫 「${targetName}」を追放し、空になった部屋「${roomId}」を閉じました。`);
+          return;
+        }
+        if (data.hostId === targetPid) {
+          data.hostId = remainingHumans[0].id;
+          data.hostName = remainingHumans[0].name;
+        }
+        window.MaigoGameEngine.addLog(data.gameState, `🚫 ${targetName} が部屋から追放され、CPUに引き継がれました。`, 'info');
+        data.players = roomPlayers;
+        data.updatedAt = Date.now();
+        await set(roomRef, data);
+      }
+      this.showToastNotification(`🚫 部屋「${roomId}」から「${targetName}」を追放しました。`);
+    } catch (e) {
+      alert('追放処理に失敗しました: ' + e.message);
+    }
   }
 
   extractRoomPlayersList(roomObj) {
@@ -559,8 +647,24 @@ class MaigoApp {
     const roomRef = ref(db, `maigo_rooms/${code}`);
     this.roomUnsubscribe = onValue(roomRef, snapshot => {
       const data = snapshot.val();
-      if (!data) return;
+      if (!data) {
+        this.leaveRoom();
+        return;
+      }
       data.players = Array.isArray(data.players) ? data.players : Object.values(data.players || {});
+
+      // 自分が部屋から追放されたかチェック
+      const activePool = (data.status !== 'WAITING' && data.gameState && data.gameState.players)
+        ? (Array.isArray(data.gameState.players) ? data.gameState.players : Object.values(data.gameState.players))
+        : data.players;
+      const stillInRoom = activePool.some(p => p.id === this.myPlayerId);
+      if (!stillInRoom) {
+        try { localStorage.removeItem('maigo_last_online_session'); } catch (_) {}
+        this.leaveRoom();
+        this.showToastNotification('🚫 ホストにより部屋から追放されました。');
+        return;
+      }
+
       this.roomData = data;
       this.isHost = data.hostId === this.myPlayerId;
 
@@ -648,6 +752,22 @@ class MaigoApp {
     }
   }
 
+  kickPlayerFromRoom(targetPlayerId) {
+    if (!this.isHost || !this.roomData) return;
+    if (targetPlayerId === this.myPlayerId) return;
+    const idx = this.roomData.players.findIndex(p => p.id === targetPlayerId);
+    if (idx === -1) return;
+    const target = this.roomData.players[idx];
+    if (!target.isCpu) {
+      if (!confirm(`プレイヤー「${target.name}」を部屋から追放しますか？`)) {
+        return;
+      }
+    }
+    this.roomData.players.splice(idx, 1);
+    this.showToastNotification(`🚫 「${target.name}」を部屋から追放しました。`);
+    this.syncRoomData();
+  }
+
   onHostSettingsChanged() {
     if (!this.isHost || !this.roomData) return;
     const cfg = this.roomData.config;
@@ -674,11 +794,15 @@ class MaigoApp {
       codeBadge.textContent = this.isOnlineRoom ? `部屋番号: ${this.roomData.roomId}` : 'ソロ＋CPU対戦（ローカルルーム）';
     }
 
-    // プレイヤー一覧描画
+    // プレイヤー一覧描画（ホストは自分以外のプレイヤーを「追放」可能）
     const pGrid = document.getElementById('waiting-players-grid');
     if (pGrid) {
       pGrid.innerHTML = players.map((p, idx) => {
         const ch = window.MAIGO_CHARACTERS.find(c => c.id === p.characterId) || window.MAIGO_CHARACTERS[0];
+        const canKick = this.isHost && p.id !== this.myPlayerId;
+        const kickBtnHTML = canKick
+          ? `<button type="button" class="btn-kick-player" data-kick-pid="${this.escapeHTML(p.id)}" title="このプレイヤーを部屋から追放する">🚫 追放</button>`
+          : '';
         return `
           <div class="waiting-player-card ${p.id === this.myPlayerId ? 'is-me' : ''}">
             <div class="wp-seat">席 ${idx + 1}</div>
@@ -687,9 +811,16 @@ class MaigoApp {
               <div class="wp-name">${this.escapeHTML(p.name)} ${p.id === this.roomData.hostId ? '👑' : ''}</div>
               <div class="wp-char">${ch.name} ${p.isCpu ? '<span class="cpu-tag">CPU</span>' : '<span class="human-tag">人間</span>'}</div>
             </div>
+            ${kickBtnHTML}
           </div>
         `;
       }).join('');
+
+      pGrid.querySelectorAll('[data-kick-pid]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          this.kickPlayerFromRoom(btn.dataset.kickPid);
+        });
+      });
     }
 
     const countInfo = document.getElementById('waiting-player-count-badge');
@@ -736,7 +867,7 @@ class MaigoApp {
       customMaigoCount: cfg.expansionMode === 'custom' ? cfg.customMaigoCount : null,
       customDeckScale: cfg.expansionMode === 'custom' ? cfg.customDeckScale : 1
     });
-    const handPerPlayer = players.length === 2 ? 6 : 4;
+    const handPerPlayer = 5;
     const neededCards = players.length * handPerPlayer;
     const deckRemain = Math.max(0, stats.total - neededCards);
 
@@ -1051,6 +1182,11 @@ class MaigoApp {
         ? `<div class="opp-finished-banner status-${p.roundStatus.toLowerCase()}">${this.getRoundStatusBadgeHTML(p.roundStatus)}</div>`
         : '';
 
+      const canInGameKick = this.isOnlineRoom && this.isHost && !p.isCpu && p.id !== this.myPlayerId;
+      const inGameKickBtn = canInGameKick
+        ? `<button type="button" class="opp-kick-btn" data-ingame-kick-pid="${this.escapeHTML(p.id)}" title="このプレイヤーを部屋から追放してCPUに切り替える">🚫追放</button>`
+        : '';
+
       return `
         <div class="opponent-card ${isTurn ? 'is-turn' : ''} ${p.roundStatus !== 'ACTIVE' ? 'is-inactive' : ''} ${isRight ? 'is-right-neighbor' : ''}">
           ${neighborRelationBadge}
@@ -1061,6 +1197,7 @@ class MaigoApp {
                 <span class="opp-name">${this.escapeHTML(p.name)}</span>
                 ${p.isCpu ? '<span class="cpu-mini-tag">CPU</span>' : ''}
                 ${roleTag}
+                ${inGameKickBtn}
               </div>
               <div class="opp-char-title">${showOideAvatar ? '迷子に憑依された者' : ch.name}</div>
               ${this.renderLifeOrbsHTML(p.life)}
@@ -1076,6 +1213,17 @@ class MaigoApp {
         </div>
       `;
     }).join('');
+
+    container.querySelectorAll('[data-ingame-kick-pid]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (this.roomId) {
+          const targetP = state.players.find(pl => pl.id === btn.dataset.ingameKickPid);
+          if (targetP) {
+            this.kickPlayerFromLobbyRoom(this.roomId, targetP.id, targetP.name);
+          }
+        }
+      });
+    });
   }
 
   // 中央ステージ（山札・捨て札・手順1の右隣手札引きUI）
@@ -1083,6 +1231,14 @@ class MaigoApp {
     const bannerEl = document.getElementById('turn-instruction-banner');
     const drawStageEl = document.getElementById('step1-draw-stage');
     const topDiscardEl = document.getElementById('center-discard-top');
+    const mainBoardEl = document.getElementById('table-main-board');
+    const isStep1Interactive = Boolean(
+      turnPlayer &&
+      state.phase === 'TURN_DRAW_FROM_RIGHT' &&
+      isMyTurn &&
+      window.MaigoGameEngine.getRightActiveNeighbor(state, state.turnPlayerIndex)
+    );
+    mainBoardEl?.classList.toggle('step1-active', isStep1Interactive);
 
     // 最新捨て札カードの表示
     if (topDiscardEl) {
@@ -1815,9 +1971,14 @@ class MaigoApp {
 
   // ログ一覧の描画
   renderActionLogs(state) {
+    const logs = state.logs || [];
+    const tickerEl = document.getElementById('live-log-ticker');
+    if (tickerEl && logs.length > 0) {
+      tickerEl.textContent = `📜 [R${logs[0].round}] ${logs[0].text}`;
+    }
     const logContainer = document.getElementById('game-log-list');
     if (!logContainer) return;
-    logContainer.innerHTML = (state.logs || []).map(l => `
+    logContainer.innerHTML = logs.map(l => `
       <div class="log-entry log-${l.type || 'normal'}">
         <span class="log-r">[R${l.round}]</span> ${this.escapeHTML(l.text)}
       </div>
@@ -1925,6 +2086,7 @@ class MaigoApp {
         el.classList.toggle('hidden', id !== screenId);
       }
     });
+    document.body.classList.toggle('in-game-locked', screenId === 'game-screen');
   }
 
   escapeHTML(str) {
