@@ -1038,7 +1038,7 @@ class MaigoApp {
           } else if (endEv.endType === 'OIDE_FINISHED') {
             await window.maigoEffects.playHappyEndCutscene(p, true);
           } else if (endEv.endType === 'NORMAL_END') {
-            window.maigoAudio.playNormalEndSound();
+            await window.maigoEffects.playNormalEndCutscene(p);
           }
         }
       }

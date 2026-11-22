@@ -317,36 +317,99 @@ class MaigoAudioEngine {
     osc.stop(startTime + duration + 0.02);
   }
 
-  // BAD END ホラー衝撃音
+  // 演出導入時の静かな前兆音（セリフ表示時）
+  playPreludeTone(mode = 'neutral') {
+    if (!this.enabled) return;
+    this.init();
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+
+    if (mode === 'horror') {
+      // 遠くで街灯が消える低い余韻と静かな心音
+      this.playHeartbeat(0.35);
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(110, now);
+      osc.frequency.exponentialRampToValueAtTime(55, now + 1.8);
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.linearRampToValueAtTime(0.16, now + 0.4);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 1.9);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(now);
+      osc.stop(now + 2.0);
+    } else if (mode === 'relief') {
+      // 遠くに光を見つけた時の柔らかな高音チャイム
+      this.playBellTone(now, 523.25, 1.4, 0.14, 'sine');
+      this.playBellTone(now + 0.35, 659.25, 1.5, 0.15, 'sine');
+    } else {
+      // カード導入セリフ時の静かな風音
+      this.playNoiseBurst(0.5, 420, 2.0, 0.12);
+    }
+  }
+
+  // ゆっくり忍び寄る足音と迫る恐怖のビルドアップ音（BAD END第2段階）
+  playCreepingApproach() {
+    if (!this.enabled) return;
+    this.init();
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+
+    // 徐々に近づく足音（4歩）
+    const stepDelays = [0.1, 0.85, 1.5, 2.05];
+    stepDelays.forEach((d, idx) => {
+      const vol = 0.12 + idx * 0.08;
+      setTimeout(() => {
+        if (!this.enabled || !this.ctx) return;
+        this.playNoiseBurst(0.12, 320 + idx * 60, 2.2, vol);
+        this.playHeartbeat(0.3 + idx * 0.12);
+      }, d * 1000);
+    });
+
+    // 背後からゆっくり迫る低音クレッシェンド
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(65.4, now);
+    osc.frequency.linearRampToValueAtTime(98.0, now + 2.6);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.24, now + 2.4);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 2.9);
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 3.0);
+  }
+
+  // BAD END ホラークライマックス音（急な破裂音ではなく、じわっと包み込む不協和音）
   playBadEndHorrorStinger(patternIndex = 0) {
     if (!this.enabled) return;
     this.init();
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
 
-    // 不協和音クラスター＋グリッチノイズ
-    const freqs = [73.4, 103.8, 155.5, 233.08, 587.3, 622.25];
+    const freqs = [73.4, 103.8, 155.5, 233.08, 466.16];
     freqs.forEach((f, idx) => {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
-      osc.type = idx % 2 === 0 ? 'sawtooth' : 'triangle';
+      osc.type = idx % 2 === 0 ? 'triangle' : 'sine';
       osc.frequency.setValueAtTime(f, now);
-      osc.frequency.linearRampToValueAtTime(f * (idx % 2 === 0 ? 0.88 : 1.07), now + 1.6);
+      osc.frequency.linearRampToValueAtTime(f * (idx % 2 === 0 ? 0.92 : 1.04), now + 2.4);
 
       gain.gain.setValueAtTime(0.001, now);
-      gain.gain.linearRampToValueAtTime(0.18, now + 0.03);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 1.8);
+      gain.gain.linearRampToValueAtTime(0.14, now + 0.45);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 2.6);
 
       osc.connect(gain);
       gain.connect(this.masterGain);
       osc.start(now);
-      osc.stop(now + 1.85);
+      osc.stop(now + 2.7);
     });
 
-    this.playNoiseBurst(0.7, 1600, 0.6, 0.55);
-    // 心臓の激しい鼓動
-    setTimeout(() => this.playHeartbeat(0.7), 300);
-    setTimeout(() => this.playHeartbeat(0.6), 750);
+    this.playNoiseBurst(1.1, 680, 1.2, 0.25);
+    setTimeout(() => this.playHeartbeat(0.55), 350);
+    setTimeout(() => this.playHeartbeat(0.45), 950);
   }
 
   // HAPPY END 夜明け・安堵の和音
