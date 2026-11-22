@@ -75,6 +75,7 @@ class MaigoApp {
     // ルール・カード図鑑モーダル
     document.getElementById('btn-open-rules')?.addEventListener('click', () => this.openRulebookModal());
     document.getElementById('btn-header-rules')?.addEventListener('click', () => this.openRulebookModal());
+    document.getElementById('btn-game-rules')?.addEventListener('click', () => this.openRulebookModal());
     document.getElementById('btn-close-rules')?.addEventListener('click', () => {
       document.getElementById('rulebook-modal')?.classList.add('hidden');
     });
@@ -1057,29 +1058,38 @@ class MaigoApp {
     const turnPlayer = state.players[state.turnPlayerIndex];
     const isMyTurn = turnPlayer && turnPlayer.id === me.id && me.roundStatus === 'ACTIVE';
 
-    // 1. トップステータスバー更新
+    // 1. トップステータスバー更新（1行に収まる簡潔表示）
     const roomBadge = document.getElementById('hud-room-code-badge');
     if (roomBadge) {
       roomBadge.textContent = this.isOnlineRoom && this.roomId && this.roomId !== 'LOCAL'
-        ? `🌐 部屋番号: ${this.roomId}`
-        : '🏠 ソロ＋CPU';
+        ? `#${this.roomId}`
+        : '🏠ソロ';
     }
-    document.getElementById('hud-round-badge').textContent = `ROUND ${state.currentRound} / ${state.totalRounds}`;
+    document.getElementById('hud-round-badge').textContent = `R${state.currentRound}/${state.totalRounds}`;
     const modeBadge = document.getElementById('hud-mode-badge');
     if (modeBadge) {
       if (state.mode === 'oideoide') {
-        modeBadge.textContent = state.oideKnowAtStart
-          ? '👁 おいで、おいで（初手正体公開）'
-          : '👁‍🗨 おいで、おいで（正体隠匿）';
+        modeBadge.textContent = state.oideKnowAtStart ? '👁おいで(公開)' : '👁‍🗨おいで(隠匿)';
         modeBadge.className = 'hud-badge mode-oide';
       } else {
-        modeBadge.textContent = '🔦 通常モード';
+        modeBadge.textContent = '🔦通常';
         modeBadge.className = 'hud-badge mode-normal';
       }
     }
 
     document.getElementById('hud-deck-count').textContent = `${state.deck.length}枚`;
-    document.getElementById('hud-discard-count').textContent = `${state.discardPile.length}枚`;
+    document.getElementById('hud-discard-count').textContent = `${state.discardPile.length}`;
+
+    // 手番フェーズが切り替わった際の手札ドロワー自動開閉アシスト（手順1では閉じて中央を広く、手順2では自動で開く）
+    const phaseKey = `${state.currentRound}_${state.turnPlayerIndex}_${state.phase}_${isMyTurn}`;
+    if (this.lastAutoDrawerPhaseKey !== phaseKey) {
+      this.lastAutoDrawerPhaseKey = phaseKey;
+      if (isMyTurn && state.phase === 'TURN_DRAW_FROM_RIGHT') {
+        this.isHandDrawerOpen = false;
+      } else if (isMyTurn && state.phase === 'TURN_PLAY_CARD') {
+        this.isHandDrawerOpen = true;
+      }
+    }
 
     // 2. 自分の手札危険度と心音（Heartbeat）・ビネット演出の更新
     this.updateDangerTensionAndVignette(state, me);
@@ -1125,7 +1135,7 @@ class MaigoApp {
       vignette?.classList.add('oide-possessed');
       if (dangerBanner) {
         dangerBanner.className = 'danger-banner status-oide';
-        dangerBanner.innerHTML = `👁‍🗨 <strong>おいで、おいで憑依中</strong>（BAD END無効）`;
+        dangerBanner.innerHTML = `👁‍🗨<strong>おいで</strong>`;
       }
       return;
     }
@@ -1135,27 +1145,27 @@ class MaigoApp {
       vignette?.classList.add('tension-2');
       if (dangerBanner) {
         dangerBanner.className = 'danger-banner status-critical';
-        dangerBanner.innerHTML = `⚠️ <strong>危険！迷子${maigoCount}・あかり残1</strong>（あかり0でBAD END）`;
+        dangerBanner.innerHTML = `⚠️<strong>迷子${maigoCount}・灯1</strong>`;
       }
     } else if (maigoCount > 0 && lightCount >= 2) {
       window.maigoAudio.setTension(1);
       vignette?.classList.add('tension-1');
       if (dangerBanner) {
         dangerBanner.className = 'danger-banner status-caution';
-        dangerBanner.innerHTML = `👁 <strong>警戒：迷子${maigoCount}枚</strong>（あかり残${lightCount}枚）`;
+        dangerBanner.innerHTML = `👁<strong>迷子${maigoCount}・灯${lightCount}</strong>`;
       }
     } else if (maigoCount === 0 && lightCount === 0 && darkCount > 0) {
       window.maigoAudio.setTension(1);
       vignette?.classList.add('tension-1');
       if (dangerBanner) {
         dangerBanner.className = 'danger-banner status-darkonly';
-        dangerBanner.innerHTML = `🌑 <strong>くらやみのみ</strong>（迷子を引くと即BAD END）`;
+        dangerBanner.innerHTML = `🌑<strong>暗闇のみ</strong>`;
       }
     } else {
       window.maigoAudio.stopHeartbeat();
       if (dangerBanner) {
         dangerBanner.className = 'danger-banner status-safe';
-        dangerBanner.innerHTML = `🔦 <strong>安全</strong>（あかり${lightCount}／くらやみ${darkCount}）`;
+        dangerBanner.innerHTML = `🔦<strong>安全(灯${lightCount})</strong>`;
       }
     }
   }
@@ -1253,6 +1263,7 @@ class MaigoApp {
       window.MaigoGameEngine.getRightActiveNeighbor(state, state.turnPlayerIndex)
     );
     mainBoardEl?.classList.toggle('step1-active', isStep1Interactive);
+    mainBoardEl?.classList.toggle('hand-open-with-step1', isStep1Interactive && this.isHandDrawerOpen);
 
     // 中央の捨て札トップ表示（カードには効果文を書かず、タップで効果詳細＆捨て札一覧を見られる）
     if (topDiscardEl) {
@@ -1372,16 +1383,16 @@ class MaigoApp {
     handBodyEl?.classList.toggle('hidden', !this.isHandDrawerOpen);
     if (toggleBtnEl) {
       toggleBtnEl.innerHTML = this.isHandDrawerOpen
-        ? `▼ 手札を閉じる (${me.hand.length}枚)`
-        : `▲ 手札を開く (${me.hand.length}枚)`;
+        ? `▼ 手札を閉じる`
+        : `▲ 手札(${me.hand.length}枚)`;
       toggleBtnEl.classList.toggle('pulse-open-hint', !this.isHandDrawerOpen && canPlayNow);
     }
 
     if (myProfileEl) {
       myProfileEl.innerHTML = `
-        <span class="my-compact-name">👤 ${this.escapeHTML(me.name)}</span>
+        <span class="my-compact-name">👤${this.escapeHTML(me.name)}</span>
         <span class="my-compact-pts">❤️<strong>${me.life}</strong></span>
-        <span class="my-compact-hand">🃏<strong>${me.hand.length}</strong>枚</span>
+        <span class="my-compact-hand">🃏<strong>${me.hand.length}</strong></span>
       `;
     }
 
@@ -1413,7 +1424,7 @@ class MaigoApp {
               </div>
               <div class="card-illustration">${window.getCardIllustrationSVG(def.id)}</div>
               <div class="card-title-row">${def.name}</div>
-              <div class="card-tap-hint">${canPlayNow && def.category !== 'maigo' ? 'タップで効果・使用' : 'タップで効果確認'}</div>
+              <div class="card-tap-hint">${canPlayNow && def.category !== 'maigo' ? '効果・使用' : '効果詳細'}</div>
             </button>
           `;
         }).join('');

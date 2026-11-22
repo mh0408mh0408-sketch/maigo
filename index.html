@@ -218,22 +218,22 @@
          3. メインゲームテーブル画面（中央フィールド広大化＋開閉式手札ドロワー）
          ==================================================================== -->
     <main id="game-screen" class="hidden">
-      <!-- 上部ゲーム情報バー（超コンパクト） -->
+      <!-- 上部ゲーム情報バー（1行にすっきり収まるコンパクト設計） -->
       <div class="game-top-bar">
         <div class="hud-badges-left">
           <span id="hud-room-code-badge" class="hud-badge">部屋: LOCAL</span>
-          <span id="hud-round-badge" class="hud-badge">R 1/3</span>
-          <span id="hud-mode-badge" class="hud-badge mode-normal">🔦 通常</span>
+          <span id="hud-round-badge" class="hud-badge">R1/3</span>
+          <span id="hud-mode-badge" class="hud-badge mode-normal">🔦通常</span>
         </div>
         <div class="hud-badges-right">
           <button type="button" class="btn-secondary btn-sm" id="btn-inspect-discard">
-            🗑 捨て札 (<span id="hud-discard-count">0枚</span>)
+            🗑捨札(<span id="hud-discard-count">0</span>)
           </button>
           <button type="button" class="btn-secondary btn-sm" id="btn-toggle-mobile-log">
-            📜 ログ
+            📜ログ
           </button>
-          <button type="button" class="btn-secondary btn-sm" id="btn-game-leave-lobby" title="ゲームを終了してロビーへ戻る">
-            🚪 ロビーへ
+          <button type="button" class="btn-secondary btn-sm" id="btn-game-leave-lobby" title="ロビーへ戻る">
+            🚪退出
           </button>
         </div>
       </div>
@@ -297,7 +297,7 @@
         </div>
 
         <div id="hand-drawer-body" class="hand-drawer-body">
-          <div class="hand-tap-guide">💡 カードをタップすると「効果の詳細」と「使用する」ボタンが表示されます</div>
+          <div class="hand-tap-guide">💡 カードをタップで「効果の確認・使用」ができます</div>
           <div id="my-hand-cards" class="my-hand-cards"></div>
         </div>
       </section>
