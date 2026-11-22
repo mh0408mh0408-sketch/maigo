@@ -1292,7 +1292,7 @@ class MaigoApp {
       if (isMyTurn && rightNeighbor) {
         if (bannerEl) {
           bannerEl.className = 'turn-banner my-turn-banner phase-step1';
-          bannerEl.innerHTML = `【手順1：右隣から引く】右隣「<strong>${this.escapeHTML(rightNeighbor.name)}</strong>」の裏向きカードを1枚タップして引いてください`;
+          bannerEl.innerHTML = `【手順1】右隣「<strong>${this.escapeHTML(rightNeighbor.name)}</strong>」のカードを1枚タップして引く`;
         }
         if (drawStageEl) {
           drawStageEl.classList.remove('hidden');
@@ -1323,7 +1323,7 @@ class MaigoApp {
           drawStageEl.innerHTML = `
             <div class="step1-draw-box">
               <div class="step1-title">
-                ◀ 右隣「<strong>${this.escapeHTML(rightNeighbor.name)}</strong>」の手札（${rightNeighbor.hand.length}枚）から1枚タップして引く
+                ◀ 右隣「<strong>${this.escapeHTML(rightNeighbor.name)}</strong>」の手札（${rightNeighbor.hand.length}枚）
               </div>
               <div class="facedown-cards-fan">${cardsHTML}</div>
             </div>
@@ -1340,7 +1340,7 @@ class MaigoApp {
         if (drawStageEl) drawStageEl.classList.add('hidden');
         if (bannerEl) {
           bannerEl.className = 'turn-banner other-turn-banner';
-          bannerEl.innerHTML = `⏳ <strong>${this.escapeHTML(turnPlayer.name)}</strong> の番（手順1：右隣の ${this.escapeHTML(rightNeighbor?.name || '')} から1枚引いています）`;
+          bannerEl.innerHTML = `⏳ <strong>${this.escapeHTML(turnPlayer.name)}</strong> の番（右隣から1枚引いています）`;
         }
       }
     } else if (state.phase === 'TURN_PLAY_CARD') {
@@ -1348,19 +1348,19 @@ class MaigoApp {
       if (isMyTurn) {
         if (bannerEl) {
           bannerEl.className = 'turn-banner my-turn-banner phase-step2';
-          bannerEl.innerHTML = `【手順2：カードを使う】手札のカードをタップして効果を確認し、「使用する」で場に出してください（残り行動: <strong>${state.actionsRemaining}</strong>）`;
+          bannerEl.innerHTML = `【手順2】手札をタップして使う（残り行動: <strong>${state.actionsRemaining}</strong>）`;
         }
       } else {
         if (bannerEl) {
           bannerEl.className = 'turn-banner other-turn-banner';
-          bannerEl.innerHTML = `⏳ <strong>${this.escapeHTML(turnPlayer.name)}</strong> の番（手順2：場に出すカードを選んでいます）`;
+          bannerEl.innerHTML = `⏳ <strong>${this.escapeHTML(turnPlayer.name)}</strong> の番（出すカードを選んでいます）`;
         }
       }
     } else if (state.phase === 'AWAITING_CHOICE') {
       if (drawStageEl) drawStageEl.classList.add('hidden');
       if (bannerEl) {
         bannerEl.className = 'turn-banner other-turn-banner';
-        bannerEl.innerHTML = `⚡ カード効果の対象・カードを選択中です…`;
+        bannerEl.innerHTML = `⚡ カード効果の対象を選択中です…`;
       }
     }
   }

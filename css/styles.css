@@ -2738,10 +2738,15 @@ body.in-game-locked #game-screen > * {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: space-evenly;
+  justify-content: flex-start;
   gap: 8px;
   overflow-y: auto;
   padding: 4px;
+}
+
+.center-field-stage > .deck-discard-showcase {
+  margin-top: auto;
+  margin-bottom: auto;
 }
 
 /* 手順1のときも中央の山札・捨て札を表示しつつ下に右隣の手札を見切れずに並べる */
@@ -3137,8 +3142,36 @@ body.in-game-locked #game-screen > * {
 }
 
 @media (max-width: 768px) {
-  .table-main-board.hand-open-with-step1 .deck-discard-showcase {
-    display: none !important;
+  .game-top-bar {
+    flex-wrap: nowrap !important;
+    padding: 3px 6px !important;
+    gap: 4px !important;
+    overflow-x: auto;
+  }
+  .hud-badges-left,
+  .hud-badges-right {
+    flex-wrap: nowrap !important;
+    gap: 3px !important;
+    flex-shrink: 0;
+  }
+  .hud-badge,
+  .game-top-bar .btn-sm {
+    font-size: 0.66rem !important;
+    padding: 2px 6px !important;
+    white-space: nowrap;
+  }
+
+  .table-main-board.hand-open-with-step1 .deck-stack-visual,
+  .table-main-board.hand-open-with-step1 .mini-discard-card,
+  .table-main-board.hand-open-with-step1 .empty-discard-slot {
+    width: 56px;
+    height: 74px;
+  }
+  .table-main-board.hand-open-with-step1 .pile-label {
+    font-size: 0.56rem;
+  }
+  .table-main-board.hand-open-with-step1 .facedown-pick-card {
+    height: 74px !important;
   }
   .deck-stack-visual,
   .mini-discard-card,
@@ -3169,17 +3202,56 @@ body.in-game-locked #game-screen > * {
   .facedown-pick-card {
     height: 82px !important;
   }
+
+  .hand-tap-guide {
+    font-size: 0.68rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 手札5〜6枚が横にはみ出さず1画面幅にすべて収まる自動伸縮カード */
+  .my-hand-cards {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    justify-content: center !important;
+    gap: 5px !important;
+    padding: 6px 2px 2px !important;
+    width: 100%;
+    overflow-x: auto;
+  }
+
   .game-card.simple-tap-card {
-    width: 90px;
-    min-width: 90px;
-    min-height: 116px;
-    max-height: 122px;
-    padding: 5px;
+    flex: 1 1 0 !important;
+    width: auto !important;
+    min-width: 48px !important;
+    max-width: 72px !important;
+    min-height: 106px !important;
+    max-height: 114px !important;
+    padding: 4px !important;
+    margin: 0 !important;
+  }
+  .game-card.simple-tap-card .card-top-bar {
+    margin-bottom: 2px;
+  }
+  .game-card.simple-tap-card .card-cat-pill,
+  .game-card.simple-tap-card .card-action-tag {
+    font-size: 0.52rem !important;
+    padding: 1px 3px !important;
   }
   .game-card.simple-tap-card .card-illustration {
-    height: 44px;
+    height: 40px !important;
+    margin-bottom: 2px !important;
   }
   .game-card.simple-tap-card .card-title-row {
-    font-size: 0.72rem;
+    font-size: 0.64rem !important;
+    line-height: 1.15 !important;
+    margin-bottom: 2px !important;
+    word-break: keep-all;
+  }
+  .game-card.simple-tap-card .card-tap-hint {
+    font-size: 0.52rem !important;
+    padding: 1px 2px !important;
+    white-space: nowrap;
   }
 }
