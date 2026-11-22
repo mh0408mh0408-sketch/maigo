@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ボードゲーム『迷子 - MAIGO -』オンライン＆ソロ完全版</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;600;700;900&family=Shippori+Mincho:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <!-- 背景パーティクル（夜霧・街灯の塵・雨・夜明けの光） -->
+  <canvas id="ambient-canvas"></canvas>
+  <!-- 危険度（迷子所持＆あかり残り1枚）に応じた心音連動ビネット -->
+  <div id="danger-vignette"></div>
+
+  <div id="app-root">
+    <!-- 共通トップヘッダー -->
+    <header class="top-header">
+      <div class="brand-logo">
+        <span class="brand-kanji">迷 子</span>
+        <span class="brand-sub">― MAIGO : NIGHT TOWN BOARD GAME ―</span>
+      </div>
+      <div class="header-controls">
+        <button type="button" class="btn-secondary btn-sm" id="btn-header-rules">📖 ルール・全カード図鑑</button>
+        <button type="button" class="btn-secondary btn-sm" id="btn-toggle-sound">🔊 音響 ON</button>
+      </div>
+    </header>
+
+    <!-- ====================================================================
+         1. ロビー画面（タイトル・キャラクター選択・ソロ／オンライン対戦）
+         ==================================================================== -->
+    <main id="lobby-screen" class="screen-container">
+      <section class="hero-banner">
+        <h1 class="hero-title">迷 子</h1>
+        <p class="hero-catch">「手札から“あかり”が消えた時、あなたはもう家に帰れない――」</p>
+      </section>
+
+      <div class="lobby-grid">
+        <!-- 左：プレイヤー設定＆キャラクターカード選択 -->
+        <section class="panel-card">
+          <div class="panel-title">
+            <span>👤 プレイヤー情報・キャラクターカード選択</span>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="player-name-input">プレイヤー名</label>
+            <input type="text" id="player-name-input" class="text-input" maxlength="16" placeholder="名前を入力..." value="迷い人" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">使用するキャラクターカード（ライフ7管理用）</label>
+            <div id="char-selector-grid" class="char-selector-grid"></div>
+          </div>
+        </section>
+
+        <!-- 右：ゲーム開始メニュー（ソロ＋CPU／Firebaseオンライン通信対戦） -->
+        <section class="panel-card">
+          <div class="panel-title">
+            <span>🕯 ゲームを始める（2〜8人プレイ対応）</span>
+            <button type="button" class="btn-secondary btn-sm" id="btn-open-rules">ルール詳細</button>
+          </div>
+
+          <div class="mode-action-blocks">
+            <!-- すぐ遊ぶ（ソロ＋CPU対戦 / ルーム設定可能） -->
+            <div class="action-box">
+              <div class="action-box-title">🔦 すぐ遊ぶ（ソロ＋CPU対戦 ／ 2〜8人設定）</div>
+              <div class="action-box-desc">
+                1人でもすぐに遊べます！待機室でCPUの人数（2〜8人）、通常／「おいで、おいで」モード（初手正体公開・非公開）、追加カードなどを自由に設定できます。
+              </div>
+              <button type="button" class="btn-primary" id="btn-quick-solo" style="width:100%;">
+                ソロ＋CPU対戦ルームへ進む ▶
+              </button>
+            </div>
+
+            <!-- オンライン通信対戦（Firebase Realtime Database） -->
+            <div class="action-box">
+              <div class="action-box-title">🌐 オンライン通信対戦（友達と遊ぶ・途中復帰対応）</div>
+              <div class="action-box-desc">
+                部屋番号を共有して2〜8人でオンライン対戦できます。<br>
+                <span style="color:#fde047;">※通信切断や誤って画面を閉じて落ちてしまった場合も、<strong>参加時と同じ「プレイヤー名」と「部屋番号」</strong>で進行中のゲームにそのまま復帰できます！</span>
+              </div>
+
+              <!-- 前回のオンラインセッションがある場合のワンクリック復帰バナー -->
+              <div id="reconnect-session-banner" class="reconnect-banner hidden"></div>
+
+              <button type="button" class="btn-accent" id="btn-create-online" style="width:100%;">
+                ＋ 新しくオンラインルームを作成する
+              </button>
+
+              <div class="join-row">
+                <input type="text" id="join-room-code" class="text-input" maxlength="8" placeholder="4桁の部屋番号を入力 (例: 4829)" />
+                <button type="button" class="btn-secondary" id="btn-join-online" style="white-space:nowrap;">部屋番号で参加・復帰</button>
+              </div>
+
+              <div style="margin-top:12px;">
+                <div class="form-label">現在のオンラインルーム一覧（待機中／進行中への復帰）：</div>
+                <div id="public-rooms-list" class="public-rooms-list">
+                  <div class="empty-rooms-msg">ルーム一覧を読み込み中…</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <!-- ====================================================================
+         2. 待機室＆ルーム設定画面（通常／おいでおいで・初手正体設定・5人以上拡張）
+         ==================================================================== -->
+    <main id="waiting-screen" class="screen-container hidden">
+      <div class="waiting-layout">
+        <!-- 左：参加プレイヤー一覧（最大8人） -->
+        <section class="panel-card">
+          <div class="panel-title">
+            <span id="waiting-room-code">部屋番号: ----</span>
+            <button type="button" class="btn-secondary btn-sm" id="btn-leave-room">退出する</button>
+          </div>
+
+          <div id="waiting-player-count-badge" style="margin-bottom:10px; font-size:0.88rem; color:#fde047;"></div>
+          <div id="waiting-players-grid" class="waiting-players-grid"></div>
+
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <button type="button" class="btn-secondary" id="btn-add-cpu">＋ CPUプレイヤーを追加（最大8人）</button>
+            <button type="button" class="btn-secondary" id="btn-remove-cpu">− CPUを1人外す</button>
+          </div>
+        </section>
+
+        <!-- 右：ルーム詳細設定 -->
+        <section class="panel-card">
+          <div class="panel-title">
+            <span>⚙️ ゲームルール・モード・5人以上拡張デッキ設定</span>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="setting-mode">ゲームモード</label>
+            <select id="setting-mode" class="select-input">
+              <option value="normal">通常モード（手札を出し切るHAPPY END・生き残りを目指す基本ルール）</option>
+              <option value="oideoide">特殊ルール「おいで、おいで」モード（1人が迷子に憑依され他全員を追い詰める）</option>
+            </select>
+          </div>
+
+          <!-- 「おいで、おいで」モード選択時のみ表示：初手で誰がおいでおいでか分かるか設定 -->
+          <div class="form-group hidden" id="oide-know-setting-row">
+            <label class="form-label" for="setting-oide-know">【おいで、おいで設定】初手で誰が「おいで、おいで」か分かるかどうか</label>
+            <select id="setting-oide-know" class="select-input">
+              <option value="hidden">分からない（正体隠匿：最初は誰が憑依されているか伏せ、ラウンド終了時に正体公開）</option>
+              <option value="public">分かる（正体公開：ラウンド開始時から誰が「おいで、おいで」か全員に見える）</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="setting-extra-cards">追加カード（「黒崎さん」「神白さん」計2枚）</label>
+            <select id="setting-extra-cards" class="select-input">
+              <option value="yes">追加する（黒崎さん［くらやみ］＋神白さん［あかり／行動＋2］を採用）</option>
+              <option value="no">追加しない（基本ゲームカード32枚ベース）</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="setting-expansion-mode">カード枚数・5人以上プレイ時の拡張デッキ設定</label>
+            <select id="setting-expansion-mode" class="select-input">
+              <option value="auto">自動バランス増量（推奨：2〜4人は公式枚数、5〜8人は人数に応じて黄金比で自動増量）</option>
+              <option value="double">2セット合体（全カードを2倍に増量：大人数・長期戦向け）</option>
+              <option value="standard">基本1セット固定（32〜34枚 ※4人以下用）</option>
+              <option value="custom">カスタム設定（迷子カードの枚数とデッキ倍率を自由調整）</option>
+            </select>
+          </div>
+
+          <div class="form-group hidden" id="custom-expansion-row" style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+            <div>
+              <label class="form-label" for="setting-custom-scale">デッキカード倍率</label>
+              <select id="setting-custom-scale" class="select-input">
+                <option value="1">1.0倍（標準）</option>
+                <option value="1.5">1.5倍（中規模増量）</option>
+                <option value="2">2.0倍（2セット合体）</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label" for="setting-custom-maigo">「迷子」カードの枚数</label>
+              <select id="setting-custom-maigo" class="select-input">
+                <option value="3">3枚（基本）</option>
+                <option value="4">4枚（5人推奨）</option>
+                <option value="5">5枚（6〜7人推奨）</option>
+                <option value="6">6枚（8人・高難度）</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+            <div class="form-group">
+              <label class="form-label" for="setting-rounds">ラウンド数</label>
+              <select id="setting-rounds" class="select-input">
+                <option value="3">3ラウンド（公式ルール標準）</option>
+                <option value="1">1ラウンド（短時間決着）</option>
+                <option value="5">5ラウンド（ロングゲーム）</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="setting-horror-level">BAD END等のホラー演出</label>
+              <select id="setting-horror-level" class="select-input">
+                <option value="standard">標準（ランダムホラー演出フル）</option>
+                <option value="mild">マイルド（揺れ・驚かしを軽減）</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- デッキ構成ライブプレビュー -->
+          <div id="deck-preview-box" class="deck-preview-box"></div>
+
+          <button type="button" class="btn-primary" id="btn-start-game" style="width:100%; margin-top:16px; padding:13px;">
+            この設定でゲーム開始
+          </button>
+        </section>
+      </div>
+    </main>
+
+    <!-- ====================================================================
+         3. メインゲームテーブル画面
+         ==================================================================== -->
+    <main id="game-screen" class="hidden">
+      <!-- 上部ゲーム情報バー -->
+      <div class="game-top-bar">
+        <div class="hud-badges-left">
+          <span id="hud-room-code-badge" class="hud-badge">部屋: LOCAL</span>
+          <span id="hud-round-badge" class="hud-badge">ROUND 1 / 3</span>
+          <span id="hud-mode-badge" class="hud-badge mode-normal">🔦 通常モード</span>
+          <span class="hud-badge" title="手番は時計回り（右隣から1枚引き、カードを出して左隣へ）">↻ 時計回り進行</span>
+        </div>
+        <div class="hud-badges-right">
+          <span class="hud-badge">山札残り: <strong id="hud-deck-count">0枚</strong></span>
+          <button type="button" class="btn-secondary btn-sm" id="btn-inspect-discard">
+            捨て札を確認 (<span id="hud-discard-count">0枚</span>)
+          </button>
+        </div>
+      </div>
+
+      <!-- 他プレイヤー一覧（時計回り順） -->
+      <section id="opponents-container" class="opponents-grid"></section>
+
+      <!-- 中央テーブル（フェーズ案内・手順1の右隣手札引き・山札＆捨て札・進行ログ） -->
+      <section class="center-table-area">
+        <div class="table-main-board">
+          <div id="turn-instruction-banner" class="turn-banner">ゲーム準備中…</div>
+
+          <!-- 手順1：右隣のプレイヤーの裏向き手札から1枚引くインタラクティブステージ -->
+          <div id="step1-draw-stage" class="hidden"></div>
+
+          <!-- 山札＆最新捨て札ビジュアル -->
+          <div class="deck-discard-showcase">
+            <div class="pile-slot">
+              <div class="deck-stack-visual">
+                <span class="deck-stack-kanji">迷子</span>
+                <span style="font-size:0.7rem; color:#94a3b8; margin-top:4px;">山札</span>
+              </div>
+              <span class="pile-label">山札（裏向き）</span>
+            </div>
+
+            <div class="pile-slot">
+              <div id="center-discard-top"></div>
+              <span class="pile-label">場／最新の捨て札</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右側：リアルタイム行動・怪異ログ -->
+        <aside class="game-log-panel">
+          <div class="log-panel-header">📜 夜道の記録（行動ログ）</div>
+          <div id="game-log-list" class="game-log-list"></div>
+        </aside>
+      </section>
+
+      <!-- 下部：自分のステータス・危険度インジケーター・自分の手札 -->
+      <section class="my-player-area">
+        <div class="my-top-status-row">
+          <div id="my-character-profile" class="my-character-profile"></div>
+          <div id="my-danger-banner" class="danger-banner status-safe"></div>
+        </div>
+
+        <div id="my-play-action-bar" class="my-play-action-bar"></div>
+        <div id="my-hand-cards" class="my-hand-cards"></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ======================================================================
+       モーダル＆カットイン演出レイヤー
+       ====================================================================== -->
+  <!-- カード効果ターゲット選択・ラウンド終了・最終結果モーダル -->
+  <div id="action-modal-overlay" class="modal-overlay hidden"></div>
+
+  <!-- 捨て札確認モーダル -->
+  <div id="discard-modal" class="modal-overlay hidden">
+    <div class="modal-box modal-wide">
+      <div class="modal-title" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>🗑 現在の捨て札一覧（「振り向く」で回収可能なカード）</span>
+        <button type="button" class="btn-secondary btn-sm" id="btn-close-discard">閉じる ✕</button>
+      </div>
+      <div id="discard-modal-body"></div>
+    </div>
+  </div>
+
+  <!-- ルール・手順カード＆全26種カード図鑑モーダル -->
+  <div id="rulebook-modal" class="modal-overlay hidden">
+    <div class="modal-box modal-wide">
+      <div class="modal-title" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>📖 ボードゲーム『迷子』ルール・手順・全カード図鑑</span>
+        <button type="button" class="btn-secondary btn-sm" id="btn-close-rules">閉じる ✕</button>
+      </div>
+
+      <div class="rule-section">
+        <h3>■ 手番の流れ（時計回り）</h3>
+        <ul>
+          <li><strong>手順1：</strong>右隣のプレイヤーの手札からカードを1枚引く。</li>
+          <li><strong>手順2：</strong>自分の手札からカードを1枚場に出して効果を使用する（出したカードは捨て札になる）。<br>
+            ※「迷子」は場に出すことができません。<br>
+            ※「壊れた街灯路」のみ、2枚以上まとめて場に出すことができます。<br>
+            ※「行動＋1」「行動＋2」のカードを使用した時は、その数に応じて追加でカードを場に出せます（出さずに手番を終えても構いません）。</li>
+          <li><strong>手順3：</strong>左隣のプレイヤーの手番に移る。</li>
+        </ul>
+      </div>
+
+      <div class="rule-section">
+        <h3>■ 各ラウンドのEND条件とライフ（初期7・上限7）の増減</h3>
+        <ul>
+          <li>🌅 <strong>【HAPPY END】（ライフ＋2 ※上限7）：</strong>手札をすべて出し切る（手札0枚）→ そのラウンドから勝ち抜ける。</li>
+          <li>🌫 <strong>【NORMAL END】（ライフ−1）：</strong>他のプレイヤーのENDがすべて決まり、最後の1人になる → ラウンド終了。</li>
+          <li>💀 <strong>【BAD END】（ライフ−3）：</strong>手札が「迷子のみ」または「迷子とくらやみのみ（＝あかりが0枚で迷子がある）」になる → 即座に脱落！手札を公開し、「迷子」は山札の一番上に置き、残りは捨て札にする。<br>
+            ※手札に「あかり」が1枚以上あるか、手札が「くらやみのみ（迷子が無い）」なら続行できます！</li>
+        </ul>
+      </div>
+
+      <div class="rule-section">
+        <h3>■ 特殊ルール「おいで、おいで」モード</h3>
+        <ul>
+          <li>1人が「おいで、おいで」に憑依されます（設定で<strong>初手から誰か分かる／ラウンド終了まで誰か分からない</strong>を切替可能）。</li>
+          <li>「おいで、おいで」には通常ENDが存在せず、<strong>【BAD END】になりません（踏切でもBAD ENDになりません）</strong>。手札が「迷子」のみならカードを出さずに番を終えます。</li>
+          <li>ラウンド終了時、「おいで、おいで」はまず<strong>ライフ−1</strong>し、その後<strong>【BAD END】になったプレイヤー1人につきライフ＋1</strong>を獲得します。</li>
+        </ul>
+      </div>
+
+      <div class="rule-section">
+        <h3>■ 全カード一覧（基本32枚＋追加カード2枚）</h3>
+        <div id="rulebook-card-catalog" class="catalog-grid"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- カード使用カットイン＆BAD ENDランダムホラー／HAPPY END救済演出オーバーレイ -->
+  <div id="cutin-overlay" class="hidden"></div>
+
+  <!-- Firebase SDK (v13.4.0) 初期化＆Realtime Databaseバインディング -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js";
+    import { getAnalytics } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-analytics.js";
+    import { getDatabase, ref, set, get, onValue, update, remove } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-database.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyAEIPJnJ4MEkq8P5XoJPnH87E3UIM7fgC4",
+      authDomain: "herupa-a2ee6.firebaseapp.com",
+      databaseURL: "https://herupa-a2ee6-default-rtdb.firebaseio.com",
+      projectId: "herupa-a2ee6",
+      storageBucket: "herupa-a2ee6.firebasestorage.app",
+      messagingSenderId: "460024574659",
+      appId: "1:460024574659:web:380578537a7494b0d12876",
+      measurementId: "G-Z6KD7WLZ96"
+    };
+
+    try {
+      const app = initializeApp(firebaseConfig);
+      try { getAnalytics(app); } catch (_) {}
+      const db = getDatabase(app);
+      window.firebaseDB = { app, db, ref, set, get, onValue, update, remove };
+    } catch (err) {
+      console.warn("Firebase initialization error:", err);
+    }
+  </script>
+
+  <!-- ゲームスクリプト -->
+  <script src="js/cards.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/effects.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
