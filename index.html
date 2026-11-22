@@ -215,76 +215,91 @@
     </main>
 
     <!-- ====================================================================
-         3. メインゲームテーブル画面
+         3. メインゲームテーブル画面（中央フィールド広大化＋開閉式手札ドロワー）
          ==================================================================== -->
     <main id="game-screen" class="hidden">
-      <!-- 上部ゲーム情報バー -->
+      <!-- 上部ゲーム情報バー（超コンパクト） -->
       <div class="game-top-bar">
         <div class="hud-badges-left">
           <span id="hud-room-code-badge" class="hud-badge">部屋: LOCAL</span>
-          <span id="hud-round-badge" class="hud-badge">ROUND 1 / 3</span>
-          <span id="hud-mode-badge" class="hud-badge mode-normal">🔦 通常モード</span>
-          <span class="hud-badge hide-on-mobile" title="手番は時計回り（右隣から1枚引き、カードを出して左隣へ）">↻ 時計回り進行</span>
+          <span id="hud-round-badge" class="hud-badge">R 1/3</span>
+          <span id="hud-mode-badge" class="hud-badge mode-normal">🔦 通常</span>
         </div>
         <div class="hud-badges-right">
-          <span class="hud-badge">山札: <strong id="hud-deck-count">0枚</strong></span>
           <button type="button" class="btn-secondary btn-sm" id="btn-inspect-discard">
-            捨て札 (<span id="hud-discard-count">0枚</span>)
+            🗑 捨て札 (<span id="hud-discard-count">0枚</span>)
           </button>
-          <button type="button" class="btn-secondary btn-sm mobile-log-btn" id="btn-toggle-mobile-log">
+          <button type="button" class="btn-secondary btn-sm" id="btn-toggle-mobile-log">
             📜 ログ
+          </button>
+          <button type="button" class="btn-secondary btn-sm" id="btn-game-leave-lobby" title="ゲームを終了してロビーへ戻る">
+            🚪 ロビーへ
           </button>
         </div>
       </div>
 
-      <!-- 他プレイヤー一覧（時計回り順） -->
+      <!-- 他プレイヤー一覧（名前・ポイント・手札枚数・右左のみを簡潔表示） -->
       <section id="opponents-container" class="opponents-grid"></section>
 
-      <!-- 中央テーブル（フェーズ案内・手順1の右隣手札引き・山札＆捨て札・進行ログ） -->
+      <!-- 広大な中央フィールド（山札・捨て札・カードを出す場・手順1の右隣引き） -->
       <section class="center-table-area">
         <div class="table-main-board" id="table-main-board">
-          <div id="turn-instruction-banner" class="turn-banner">ゲーム準備中…</div>
-          <div id="live-log-ticker" class="live-log-ticker" title="タップで行動ログ一覧を表示">📜 ゲーム開始</div>
+          <div class="center-top-banners">
+            <div id="turn-instruction-banner" class="turn-banner">ゲーム準備中…</div>
+            <div id="live-log-ticker" class="live-log-ticker" title="タップで行動ログ一覧を表示">📜 ゲーム開始</div>
+          </div>
 
-          <!-- 手順1：右隣のプレイヤーの裏向き手札から1枚引くインタラクティブステージ -->
-          <div id="step1-draw-stage" class="hidden"></div>
-
-          <!-- 山札＆最新捨て札ビジュアル -->
-          <div class="deck-discard-showcase">
-            <div class="pile-slot">
-              <div class="deck-stack-visual">
-                <span class="deck-stack-kanji">迷子</span>
-                <span style="font-size:0.7rem; color:#94a3b8; margin-top:4px;">山札</span>
+          <!-- 中央フィールド：山札＆場（捨て札）を常に中央へ配置 -->
+          <div class="center-field-stage">
+            <div class="deck-discard-showcase">
+              <!-- 山札（中央左） -->
+              <div class="pile-slot">
+                <div class="deck-stack-visual">
+                  <span class="deck-stack-kanji">迷子</span>
+                  <span class="deck-count-pill" id="hud-deck-count">0枚</span>
+                </div>
+                <span class="pile-label">山札</span>
               </div>
-              <span class="pile-label">山札（裏向き）</span>
+
+              <!-- 場／捨て札（中央右：タップでカード効果や捨て札一覧を確認可能） -->
+              <div class="pile-slot">
+                <div id="center-discard-top"></div>
+                <span class="pile-label">場／捨て札（タップで効果確認）</span>
+              </div>
             </div>
 
-            <div class="pile-slot">
-              <div id="center-discard-top"></div>
-              <span class="pile-label">場／最新の捨て札</span>
-            </div>
+            <!-- 手順1：右隣のプレイヤーの裏向き手札から1枚引くステージ -->
+            <div id="step1-draw-stage" class="hidden"></div>
+
+            <!-- 手順2：中央フィールドのクイック操作案内 -->
+            <div id="my-play-action-bar" class="my-play-action-bar"></div>
           </div>
         </div>
 
-        <!-- 右側：リアルタイム行動・怪異ログ（スマホではポップアップドロワー表示） -->
+        <!-- 行動ログパネル（開閉ドロワー） -->
         <aside class="game-log-panel" id="game-log-panel">
           <div class="log-panel-header">
             <span>📜 夜道の記録（行動ログ）</span>
-            <button type="button" class="btn-secondary btn-sm mobile-only-close" id="btn-close-mobile-log">閉じる ✕</button>
+            <button type="button" class="btn-secondary btn-sm" id="btn-close-mobile-log">閉じる ✕</button>
           </div>
           <div id="game-log-list" class="game-log-list"></div>
         </aside>
       </section>
 
-      <!-- 下部：自分のステータス・危険度インジケーター・自分の手札 -->
-      <section class="my-player-area">
-        <div class="my-top-status-row">
+      <!-- 下部：開閉式（折りたたみ可能）の自分のステータス＆手札ドロワー -->
+      <section class="my-player-area" id="my-player-area">
+        <div class="my-top-status-row" id="hand-drawer-header">
           <div id="my-character-profile" class="my-character-profile"></div>
           <div id="my-danger-banner" class="danger-banner status-safe"></div>
+          <button type="button" class="btn-toggle-drawer" id="btn-toggle-hand-drawer">
+            ▼ 手札を閉じる
+          </button>
         </div>
 
-        <div id="my-play-action-bar" class="my-play-action-bar"></div>
-        <div id="my-hand-cards" class="my-hand-cards"></div>
+        <div id="hand-drawer-body" class="hand-drawer-body">
+          <div class="hand-tap-guide">💡 カードをタップすると「効果の詳細」と「使用する」ボタンが表示されます</div>
+          <div id="my-hand-cards" class="my-hand-cards"></div>
+        </div>
       </section>
     </main>
   </div>
@@ -292,6 +307,9 @@
   <!-- ======================================================================
        モーダル＆カットイン演出レイヤー
        ====================================================================== -->
+  <!-- カード詳細＆使用モーダル（いつでもカードをタップして効果確認＆使用ボタンでプレイ） -->
+  <div id="card-detail-modal" class="modal-overlay hidden"></div>
+
   <!-- カード効果ターゲット選択・ラウンド終了・最終結果モーダル -->
   <div id="action-modal-overlay" class="modal-overlay hidden"></div>
 

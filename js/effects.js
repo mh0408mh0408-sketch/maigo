@@ -1,5 +1,6 @@
 // ============================================================================
 // 『迷子 - MAIGO -』 ビジュアル演出・ホラーカットイン・環境エフェクトエンジン
+// じっくり読める長尺演出＋タップで次へ進めるスキップ対応
 // ============================================================================
 
 class MaigoEffectsManager {
@@ -9,8 +10,6 @@ class MaigoEffectsManager {
     this.particles = [];
     this.weatherMode = 'night'; // 'night' | 'rain' | 'dawn' | 'blood'
     this.horrorLevel = 'standard'; // 'standard' | 'mild'
-    this.cutinQueue = [];
-    this.isPlayingCutin = false;
   }
 
   initCanvas() {
@@ -25,7 +24,7 @@ class MaigoEffectsManager {
     window.addEventListener('resize', resize);
 
     this.particles = [];
-    for (let i = 0; i < 65; i++) {
+    for (let i = 0; i < 60; i++) {
       this.particles.push(this.createParticle());
     }
     this.animateCanvas();
@@ -105,8 +104,36 @@ class MaigoEffectsManager {
     requestAnimationFrame(() => this.animateCanvas());
   }
 
+  // 指定時間待機、またはユーザーのタップでスキップ可能にするヘルパー
+  waitForCutinDurationOrTap(overlay, durationMs, minLockMs = 700) {
+    return new Promise(resolve => {
+      let finished = false;
+      let canSkip = false;
+
+      const lockTimer = setTimeout(() => {
+        canSkip = true;
+      }, minLockMs);
+
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(lockTimer);
+        clearTimeout(autoTimer);
+        overlay.removeEventListener('click', onClick);
+        resolve();
+      };
+
+      const onClick = () => {
+        if (canSkip) finish();
+      };
+
+      overlay.addEventListener('click', onClick);
+      const autoTimer = setTimeout(finish, durationMs);
+    });
+  }
+
   // --------------------------------------------------------------------------
-  // 各カード専用のビジュアルカットイン演出
+  // 各カード専用のビジュアルカットイン演出（文字がしっかり読める4.2〜4.8秒表示）
   // --------------------------------------------------------------------------
   async playCardCutin(cardId, playerName, count = 1, extraNote = '') {
     const card = window.MAIGO_CARDS[cardId];
@@ -118,7 +145,7 @@ class MaigoEffectsManager {
     window.maigoAudio.playCardEffectSound(cardId);
 
     if (cardId === 'rain') {
-      this.setWeather('rain', 6000);
+      this.setWeather('rain', 8000);
     } else if (cardId === 'broken_streetlight' || cardId === 'shrine' || cardId === 'tunnel') {
       this.triggerScreenShake('shake-medium');
     } else if (cardId === 'railroad_crossing') {
@@ -135,7 +162,7 @@ class MaigoEffectsManager {
         <div class="cutin-bg-effect">${themeVisual}</div>
         <div class="cutin-content">
           <div class="cutin-user-line">
-            <span class="cutin-player-name">${this.escapeHTML(playerName)}</span> がカードを使用
+            <span class="cutin-player-name">${this.escapeHTML(playerName)}</span> がカードを使用！
             ${countBadge} ${actionBadge}
           </div>
           <div class="cutin-card-showcase">
@@ -145,15 +172,20 @@ class MaigoEffectsManager {
             </div>
           </div>
           <div class="cutin-narration">${card.cutinText}</div>
-          ${extraNote ? `<div class="cutin-extra-note">${this.escapeHTML(extraNote)}</div>` : ''}
+          <div class="cutin-effect-desc-box">
+            <div class="ced-label">【カード効果】</div>
+            <div class="ced-text">${this.escapeHTML(card.description)}</div>
+          </div>
+          ${extraNote ? `<div class="cutin-extra-note">▶ ${this.escapeHTML(extraNote)}</div>` : ''}
+          <div class="cutin-skip-hint">画面タップで次へ進む ▶</div>
         </div>
       </div>
     `;
     overlay.classList.remove('hidden');
     overlay.classList.add('active');
 
-    const duration = cardId === 'railroad_crossing' ? 2100 : 1550;
-    await new Promise(r => setTimeout(r, duration));
+    const duration = cardId === 'railroad_crossing' ? 4800 : 4200;
+    await this.waitForCutinDurationOrTap(overlay, duration, 650);
 
     overlay.classList.remove('active');
     overlay.classList.add('hidden');
@@ -227,13 +259,13 @@ class MaigoEffectsManager {
   }
 
   // --------------------------------------------------------------------------
-  // 【BAD END】ランダムホラー演出（全6パターンからランダム選出）
+  // 【BAD END】ランダムホラー演出（全6パターン・じっくり読める8.5秒表示）
   // --------------------------------------------------------------------------
   async playBadEndHorrorCutscene(player, reasonText = '', revealedCards = []) {
     const overlay = document.getElementById('cutin-overlay');
     if (!overlay) return;
 
-    this.setWeather('blood', 5500);
+    this.setWeather('blood', 9000);
     const patternIndex = Math.floor(Math.random() * 6);
     window.maigoAudio.playBadEndHorrorStinger(patternIndex);
     this.triggerScreenShake('shake-horror');
@@ -351,16 +383,17 @@ class MaigoEffectsManager {
         <div class="bad-end-content">
           <div class="bad-end-stamp">【 BAD END 】</div>
           <div class="bad-end-subtitle">${chosen.title}</div>
-          <div class="bad-end-victim">${this.escapeHTML(player.name)} は闇に呑まれ脱落した…</div>
-          <div class="bad-end-reason">${this.escapeHTML(reasonText || '手札から「あかり」が失われ、迷子に取り憑かれた')}</div>
+          <div class="bad-end-victim">💀 ${this.escapeHTML(player.name)} は闇に呑まれ、このラウンドから脱落した…</div>
+          <div class="bad-end-reason">【原因】${this.escapeHTML(reasonText || '手札から「あかり」が失われ、迷子に取り憑かれた')}</div>
           <div class="bad-end-quote">${chosen.quote}</div>
-          <div class="bad-end-life-penalty">ライフ −3 （残りライフ: ${player.life}）</div>
+          <div class="bad-end-life-penalty">ライフ −3 （残りライフ: ❤️${player.life}）</div>
           ${cardsHTML ? `
             <div class="bad-end-hand-reveal">
-              <div class="reveal-header">公開された手札（迷子は山札の一番上へ戻される）：</div>
+              <div class="reveal-header">公開された手札（「迷子」は山札の一番上へ置かれ、残りは捨て札になります）：</div>
               <div class="reveal-cards-row">${cardsHTML}</div>
             </div>
           ` : ''}
+          <button type="button" class="btn-danger cutin-confirm-btn">内容を確認して次へ ▶</button>
         </div>
       </div>
     `;
@@ -368,20 +401,21 @@ class MaigoEffectsManager {
     overlay.classList.remove('hidden');
     overlay.classList.add('active');
 
-    await new Promise(r => setTimeout(r, 3800));
+    // 8.5秒間じっくり表示（1.8秒経過後はタップまたはボタンでいつでも閉じられる）
+    await this.waitForCutinDurationOrTap(overlay, 8500, 1800);
 
     overlay.classList.remove('active');
     overlay.classList.add('hidden');
   }
 
   // --------------------------------------------------------------------------
-  // 【HAPPY END】無事帰宅・夜明けの救済演出
+  // 【HAPPY END】無事帰宅・夜明けの救済演出（6.5秒表示）
   // --------------------------------------------------------------------------
   async playHappyEndCutscene(player, isOideOide = false) {
     const overlay = document.getElementById('cutin-overlay');
     if (!overlay) return;
 
-    this.setWeather('dawn', 5000);
+    this.setWeather('dawn', 7000);
     window.maigoAudio.playHappyEndRelief();
 
     if (isOideOide) {
@@ -392,6 +426,7 @@ class MaigoEffectsManager {
             <div class="happy-end-title">${this.escapeHTML(player.name)} は全ての手札を使い切った…</div>
             <div class="happy-end-quote">「ふふ…あとは誰が迷子になるか、見届けるだけ…」</div>
             <div class="happy-end-life">このラウンドから離脱（ライフ変動はラウンド終了時に精算）</div>
+            <div class="cutin-skip-hint">画面タップで次へ進む ▶</div>
           </div>
         </div>
       `;
@@ -407,7 +442,8 @@ class MaigoEffectsManager {
               「遠くに見慣れた家の明かりが見える…！ 玄関の扉を開けると、温かい光が迎えてくれた。<br>
               ――よかった、本当に助かった…！」
             </div>
-            <div class="happy-end-life">ライフ ＋2 回復！（現在ライフ: ${player.life} / 7）</div>
+            <div class="happy-end-life">ライフ ＋2 回復！（現在ライフ: ❤️${player.life} / 7）</div>
+            <div class="cutin-skip-hint">画面タップで次へ進む ▶</div>
           </div>
         </div>
       `;
@@ -416,14 +452,14 @@ class MaigoEffectsManager {
     overlay.classList.remove('hidden');
     overlay.classList.add('active');
 
-    await new Promise(r => setTimeout(r, 3100));
+    await this.waitForCutinDurationOrTap(overlay, 6500, 1200);
 
     overlay.classList.remove('active');
     overlay.classList.add('hidden');
   }
 
   // --------------------------------------------------------------------------
-  // 【横断歩道】「迷子」所持プレイヤーの挙手演出
+  // 【横断歩道】「迷子」所持プレイヤーの挙手演出（4.5秒表示）
   // --------------------------------------------------------------------------
   async playCrosswalkRaiseHandsCutscene(raisedNames = []) {
     const overlay = document.getElementById('cutin-overlay');
@@ -443,12 +479,13 @@ class MaigoEffectsManager {
           <div class="cutin-narration">
             ${raisedNames.length > 0 ? '手を上げたプレイヤーは左隣から順に山札を1枚引く…' : '誰も手を上げなかった…'}
           </div>
+          <div class="cutin-skip-hint">画面タップで次へ進む ▶</div>
         </div>
       </div>
     `;
     overlay.classList.remove('hidden');
     overlay.classList.add('active');
-    await new Promise(r => setTimeout(r, 2000));
+    await this.waitForCutinDurationOrTap(overlay, 4500, 800);
     overlay.classList.remove('active');
     overlay.classList.add('hidden');
   }

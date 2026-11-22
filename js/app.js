@@ -20,6 +20,9 @@ class MaigoApp {
     this.selectedHandUids = [];
     this.convenienceSelectedTakeUid = null;
     this.convenienceOrderUids = [];
+    this.conveniencePhase = 1; // 1: 手札に加える1枚選択, 2: 山札に戻す順番並べ替え
+    this.modalPreviewCardUid = null;
+    this.isHandDrawerOpen = true;
 
     this.lastProcessedEventSeq = 0;
     this.isAnimatingEvent = false;
@@ -92,6 +95,12 @@ class MaigoApp {
       document.getElementById('game-log-panel')?.classList.remove('mobile-open');
     });
 
+    // 手札ドロワー開閉（開閉式）
+    document.getElementById('btn-toggle-hand-drawer')?.addEventListener('click', () => {
+      this.isHandDrawerOpen = !this.isHandDrawerOpen;
+      this.renderGameScreen();
+    });
+
     // ロビーボタン
     document.getElementById('btn-quick-solo')?.addEventListener('click', () => this.startLocalSetupRoom());
     document.getElementById('btn-create-online')?.addEventListener('click', () => this.createOnlineRoom());
@@ -100,11 +109,16 @@ class MaigoApp {
       if (code) this.joinOnlineRoom(code);
     });
 
-    // 待機室ボタン
+    // 待機室・対戦画面からのロビー戻りボタン
     document.getElementById('btn-add-cpu')?.addEventListener('click', () => this.addCpuPlayer());
     document.getElementById('btn-remove-cpu')?.addEventListener('click', () => this.removeCpuPlayer());
     document.getElementById('btn-start-game')?.addEventListener('click', () => this.hostStartGame());
-    document.getElementById('btn-leave-room')?.addEventListener('click', () => this.leaveRoom());
+    document.getElementById('btn-leave-room')?.addEventListener('click', () => this.leaveRoom(true));
+    document.getElementById('btn-game-leave-lobby')?.addEventListener('click', () => {
+      if (confirm('現在のゲームを終了してロビー画面へ戻りますか？')) {
+        this.leaveRoom(false);
+      }
+    });
 
     // 待機室設定変更イベント
     const settingIds = [
@@ -703,7 +717,27 @@ class MaigoApp {
     }
   }
 
-  leaveRoom() {
+  closeAllGameOverlays() {
+    ['action-modal-overlay', 'card-detail-modal', 'discard-modal', 'cutin-overlay'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.classList.add('hidden');
+        el.classList.remove('active');
+        if (id === 'action-modal-overlay' || id === 'card-detail-modal' || id === 'cutin-overlay') {
+          el.innerHTML = '';
+        }
+      }
+    });
+    document.getElementById('game-log-panel')?.classList.remove('mobile-open');
+    this.isAnimatingEvent = false;
+  }
+
+  async leaveRoom(removeFromWaitingRoom = false) {
+    const leavingOnline = this.isOnlineRoom;
+    const leavingRoomId = this.roomId;
+    const leavingStatus = this.roomData?.status;
+    const myId = this.myPlayerId;
+
     if (this.roomUnsubscribe) {
       this.roomUnsubscribe();
       this.roomUnsubscribe = null;
@@ -713,9 +747,40 @@ class MaigoApp {
       this.cpuTimer = null;
     }
     window.maigoAudio.stopHeartbeat();
+    this.closeAllGameOverlays();
+
+    if (removeFromWaitingRoom && leavingOnline && leavingRoomId && leavingRoomId !== 'LOCAL' && window.firebaseDB) {
+      try {
+        localStorage.removeItem('maigo_last_online_session');
+        const { db, ref, get, set, remove } = window.firebaseDB;
+        const roomRef = ref(db, `maigo_rooms/${leavingRoomId}`);
+        const snap = await get(roomRef);
+        if (snap.exists() && leavingStatus === 'WAITING') {
+          const data = snap.val();
+          let pList = Array.isArray(data.players) ? data.players : Object.values(data.players || {});
+          pList = pList.filter(p => p.id !== myId);
+          const remainingHumans = pList.filter(p => !p.isCpu);
+          if (pList.length === 0 || remainingHumans.length === 0) {
+            await remove(roomRef);
+          } else {
+            if (data.hostId === myId) {
+              data.hostId = remainingHumans[0].id;
+              data.hostName = remainingHumans[0].name;
+            }
+            data.players = pList;
+            data.updatedAt = Date.now();
+            await set(roomRef, data);
+          }
+        }
+      } catch (_) {}
+    }
+
     this.roomData = null;
     this.gameState = null;
+    this.isOnlineRoom = false;
+    this.roomId = null;
     this.showScreen('lobby-screen');
+    this.renderPublicRoomsAndReconnectBanner();
   }
 
   // ==========================================================================
@@ -935,7 +1000,10 @@ class MaigoApp {
     if (state.lastEvent && state.lastEvent.seq > this.lastProcessedEventSeq) {
       const ev = state.lastEvent;
       this.lastProcessedEventSeq = ev.seq;
-      await this.playEventAnimations(ev);
+      const hasAnimation = ev.type === 'CARD_RESOLVED' || (ev.endEvents && ev.endEvents.length > 0);
+      if (hasAnimation) {
+        await this.playEventAnimations(ev);
+      }
     }
 
     this.renderGameScreen();
@@ -1057,7 +1125,7 @@ class MaigoApp {
       vignette?.classList.add('oide-possessed');
       if (dangerBanner) {
         dangerBanner.className = 'danger-banner status-oide';
-        dangerBanner.innerHTML = `👁‍🗨 <strong>【あなたは「おいで、おいで」に憑依されています】</strong> あなたは【BAD END】になりません。他プレイヤーを【BAD END】へ追い詰めてください！`;
+        dangerBanner.innerHTML = `👁‍🗨 <strong>おいで、おいで憑依中</strong>（BAD END無効）`;
       }
       return;
     }
@@ -1067,54 +1135,47 @@ class MaigoApp {
       vignette?.classList.add('tension-2');
       if (dangerBanner) {
         dangerBanner.className = 'danger-banner status-critical';
-        dangerBanner.innerHTML = `⚠️ <strong>【危険！】手札に「迷子(${maigoCount}枚)」があり、「あかり」が残り1枚しかありません！</strong> この「あかり」を失うと即【BAD END】です！`;
+        dangerBanner.innerHTML = `⚠️ <strong>危険！迷子${maigoCount}・あかり残1</strong>（あかり0でBAD END）`;
       }
     } else if (maigoCount > 0 && lightCount >= 2) {
       window.maigoAudio.setTension(1);
       vignette?.classList.add('tension-1');
       if (dangerBanner) {
         dangerBanner.className = 'danger-banner status-caution';
-        dangerBanner.innerHTML = `👁 <strong>【警戒】手札に「迷子(${maigoCount}枚)」がいます</strong>（あかり残り <strong>${lightCount}枚</strong> ／ くらやみ <strong>${darkCount}枚</strong>）`;
+        dangerBanner.innerHTML = `👁 <strong>警戒：迷子${maigoCount}枚</strong>（あかり残${lightCount}枚）`;
       }
     } else if (maigoCount === 0 && lightCount === 0 && darkCount > 0) {
       window.maigoAudio.setTension(1);
       vignette?.classList.add('tension-1');
       if (dangerBanner) {
         dangerBanner.className = 'danger-banner status-darkonly';
-        dangerBanner.innerHTML = `🌑 <strong>【暗闇行進】手札が「くらやみ(${darkCount}枚)」のみです！</strong> 「迷子」が無いため続行中ですが、「迷子」を引くと即【BAD END】になります！`;
+        dangerBanner.innerHTML = `🌑 <strong>くらやみのみ</strong>（迷子を引くと即BAD END）`;
       }
     } else {
       window.maigoAudio.stopHeartbeat();
       if (dangerBanner) {
         dangerBanner.className = 'danger-banner status-safe';
-        dangerBanner.innerHTML = `🔦 <strong>【安全】「迷子」はいません</strong>（あかり <strong>${lightCount}枚</strong> ／ くらやみ <strong>${darkCount}枚</strong>）`;
+        dangerBanner.innerHTML = `🔦 <strong>安全</strong>（あかり${lightCount}／くらやみ${darkCount}）`;
       }
     }
   }
 
   getRoundStatusBadgeHTML(status) {
     switch (status) {
-      case 'HAPPY_END': return '🌅 【HAPPY END】無事帰宅！（ライフ＋2）';
-      case 'BAD_END': return '💀 【BAD END】闇に呑まれ脱落…（ライフ−3）';
-      case 'NORMAL_END': return '🌫 【NORMAL END】最後の1人（ライフ−1）';
-      case 'OIDE_FINISHED': return '👁 【手札完遂】「おいで、おいで」離脱';
-      case 'OIDE_LAST': return '👁 【おいで、おいで】ラウンド終了';
+      case 'HAPPY_END': return '🌅 HAPPY END (+2)';
+      case 'BAD_END': return '💀 BAD END (-3)';
+      case 'NORMAL_END': return '🌫 NORMAL END (-1)';
+      case 'OIDE_FINISHED': return '👁 手札完遂';
+      case 'OIDE_LAST': return '👁 終了';
       default: return '行動中';
     }
   }
 
-  // ライフカウント用カード（赤の玉7個）のHTML生成
   renderLifeOrbsHTML(life) {
-    let html = '<div class="life-orbs-track" title="ライフ（赤の玉・上限7）">';
-    for (let i = 1; i <= 7; i++) {
-      const active = i <= life ? 'orb-active' : 'orb-empty';
-      html += `<span class="life-orb ${active}"></span>`;
-    }
-    html += `<span class="life-num">${life}/7</span></div>`;
-    return html;
+    return `<span class="compact-life-badge" title="ライフ（赤の玉・上限7）">❤️${life}<small>/7</small></span>`;
   }
 
-  // 自分を基準に時計回りで他プレイヤーを並べて描画
+  // 他プレイヤー一覧：ポイント（❤️）・名前・手札枚数（🃏）・右左のみを超簡潔に表示
   renderOpponentsArea(state, me) {
     const container = document.getElementById('opponents-container');
     if (!container) return;
@@ -1122,7 +1183,6 @@ class MaigoApp {
     const n = state.players.length;
     const myIdx = me ? me.seatIndex : 0;
     const opponents = [];
-    // 自分の左隣（時計回り順）から右隣まで順番に並べる
     for (let step = 1; step < n; step++) {
       const idx = (myIdx + step) % n;
       opponents.push(state.players[idx]);
@@ -1135,98 +1195,52 @@ class MaigoApp {
       ? window.MaigoGameEngine.getLeftActiveNeighbor(state, myIdx)
       : null;
 
-    container.className = `opponents-grid count-${opponents.length}`;
+    container.className = `opponents-grid compact-opponents-bar count-${opponents.length}`;
     container.innerHTML = opponents.map(p => {
       const isTurn = state.players[state.turnPlayerIndex]?.id === p.id && state.phase !== 'ROUND_END' && state.phase !== 'GAME_OVER';
       const isRight = rightNeighbor && rightNeighbor.id === p.id;
       const isLeft = leftNeighbor && leftNeighbor.id === p.id;
 
-      const ch = window.MAIGO_CHARACTERS.find(c => c.id === p.characterId) || window.MAIGO_CHARACTERS[0];
-      const showOideAvatar = state.mode === 'oideoide' && p.role === 'oideoide' && (state.oideKnowAtStart || state.oideRevealed);
-
-      let roleTag = '';
-      if (state.mode === 'oideoide') {
-        if (state.oideKnowAtStart || state.oideRevealed) {
-          roleTag = p.role === 'oideoide'
-            ? `<span class="role-pill role-oide">👁 おいで、おいで</span>`
-            : `<span class="role-pill role-normal">通常</span>`;
-        } else {
-          roleTag = `<span class="role-pill role-hidden">？ 正体伏せ</span>`;
-        }
-      }
-
-      let neighborRelationBadge = '';
+      let relBadge = '';
       if (isRight && isLeft) {
-        neighborRelationBadge = `<div class="relation-badge rel-both">◀ 右隣（引く相手） ／ 左隣（次の番） ▶</div>`;
+        relBadge = `<span class="opp-rel-chip both">右/左</span>`;
       } else if (isRight) {
-        neighborRelationBadge = `<div class="relation-badge rel-right">◀ あなたの右隣（手番開始時に引く相手）</div>`;
+        relBadge = `<span class="opp-rel-chip right" title="手順1でカードを引く相手">◀右隣</span>`;
       } else if (isLeft) {
-        neighborRelationBadge = `<div class="relation-badge rel-left">あなたの左隣（次の手番） ▶</div>`;
+        relBadge = `<span class="opp-rel-chip left" title="次の手番の相手">左隣▶</span>`;
       }
 
-      // 裏向き手札ミニカード描画
-      let miniCardsHTML = '';
-      for (let i = 0; i < p.hand.length; i++) {
-        const cardObj = p.hand[i];
-        const isLh = p.lighthouseCardUid && p.lighthouseCardUid === cardObj.uid;
-        const isAm = p.amuletCardUid && p.amuletCardUid === cardObj.uid;
-        const extraCls = isLh ? 'mini-lighthouse' : (isAm ? 'mini-amulet' : '');
-        miniCardsHTML += `<span class="opp-mini-card ${extraCls}"></span>`;
+      const showOide = state.mode === 'oideoide' && p.role === 'oideoide' && (state.oideKnowAtStart || state.oideRevealed);
+      const oideIcon = showOide ? `<span class="opp-mini-icon" title="おいで、おいで">👁</span>` : '';
+      const lhIcon = p.lighthouseCardUid ? `<span class="opp-mini-icon" title="灯台セット中">🔦</span>` : '';
+      const amIcon = p.amuletCardUid ? `<span class="opp-mini-icon" title="御守り守護中">⛩</span>` : '';
+      const turnIcon = isTurn ? `<span class="opp-turn-dot" title="手番中">⏳番</span>` : '';
+
+      let statusChip = '';
+      if (p.roundStatus !== 'ACTIVE') {
+        const shortStatus = p.roundStatus === 'HAPPY_END' ? '🌅帰宅' : (p.roundStatus === 'BAD_END' ? '💀脱落' : '離脱');
+        statusChip = `<span class="opp-end-chip">${shortStatus}</span>`;
       }
-
-      const effectBadges = [];
-      if (p.lighthouseCardUid) effectBadges.push('<span class="fx-pill fx-lh">🔦 灯台セット中</span>');
-      if (p.amuletCardUid) effectBadges.push('<span class="fx-pill fx-am">⛩ 御守り守護中</span>');
-
-      const statusOverlay = p.roundStatus !== 'ACTIVE'
-        ? `<div class="opp-finished-banner status-${p.roundStatus.toLowerCase()}">${this.getRoundStatusBadgeHTML(p.roundStatus)}</div>`
-        : '';
-
-      const canInGameKick = this.isOnlineRoom && this.isHost && !p.isCpu && p.id !== this.myPlayerId;
-      const inGameKickBtn = canInGameKick
-        ? `<button type="button" class="opp-kick-btn" data-ingame-kick-pid="${this.escapeHTML(p.id)}" title="このプレイヤーを部屋から追放してCPUに切り替える">🚫追放</button>`
-        : '';
 
       return `
-        <div class="opponent-card ${isTurn ? 'is-turn' : ''} ${p.roundStatus !== 'ACTIVE' ? 'is-inactive' : ''} ${isRight ? 'is-right-neighbor' : ''}">
-          ${neighborRelationBadge}
-          <div class="opp-header">
-            <div class="opp-avatar">${window.getCharacterAvatarSVG(ch.avatarType, showOideAvatar)}</div>
-            <div class="opp-identity">
-              <div class="opp-name-row">
-                <span class="opp-name">${this.escapeHTML(p.name)}</span>
-                ${p.isCpu ? '<span class="cpu-mini-tag">CPU</span>' : ''}
-                ${roleTag}
-                ${inGameKickBtn}
-              </div>
-              <div class="opp-char-title">${showOideAvatar ? '迷子に憑依された者' : ch.name}</div>
-              ${this.renderLifeOrbsHTML(p.life)}
-            </div>
+        <div class="opponent-card compact-opp-pill ${isTurn ? 'is-turn' : ''} ${p.roundStatus !== 'ACTIVE' ? 'is-inactive' : ''} ${isRight ? 'is-right-neighbor' : ''}">
+          <div class="cop-top-line">
+            ${relBadge}
+            ${turnIcon}
+            <span class="cop-name" title="${this.escapeHTML(p.name)}">${this.escapeHTML(p.name)}</span>
+            ${oideIcon}${lhIcon}${amIcon}
           </div>
-          <div class="opp-hand-bar">
-            <div class="opp-hand-count">手札 <strong>${p.hand.length}</strong> 枚</div>
-            <div class="opp-mini-cards">${miniCardsHTML || '<span class="no-cards-label">0枚</span>'}</div>
+          <div class="cop-bottom-line">
+            <span class="cop-pts">❤️<strong>${p.life}</strong></span>
+            <span class="cop-hand">🃏<strong>${p.hand.length}</strong>枚</span>
+            ${statusChip}
           </div>
-          ${effectBadges.length > 0 ? `<div class="opp-fx-row">${effectBadges.join('')}</div>` : ''}
-          ${isTurn ? `<div class="opp-turn-indicator">⏳ 手番進行中…</div>` : ''}
-          ${statusOverlay}
         </div>
       `;
     }).join('');
-
-    container.querySelectorAll('[data-ingame-kick-pid]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        if (this.roomId) {
-          const targetP = state.players.find(pl => pl.id === btn.dataset.ingameKickPid);
-          if (targetP) {
-            this.kickPlayerFromLobbyRoom(this.roomId, targetP.id, targetP.name);
-          }
-        }
-      });
-    });
   }
 
-  // 中央ステージ（山札・捨て札・手順1の右隣手札引きUI）
+  // 中央フィールド（山札＆捨て札を中央に配置＋手順1の右隣引きUI）
   renderCenterStage(state, me, turnPlayer, isMyTurn) {
     const bannerEl = document.getElementById('turn-instruction-banner');
     const drawStageEl = document.getElementById('step1-draw-stage');
@@ -1240,19 +1254,23 @@ class MaigoApp {
     );
     mainBoardEl?.classList.toggle('step1-active', isStep1Interactive);
 
-    // 最新捨て札カードの表示
+    // 中央の捨て札トップ表示（カードには効果文を書かず、タップで効果詳細＆捨て札一覧を見られる）
     if (topDiscardEl) {
       if (state.discardPile.length > 0) {
         const lastCard = state.discardPile[state.discardPile.length - 1];
         const def = window.MAIGO_CARDS[lastCard.cardId];
         topDiscardEl.innerHTML = def ? `
-          <div class="mini-discard-card ${def.category}">
+          <button type="button" class="mini-discard-card ${def.category}" id="btn-center-discard-card" title="タップしてこのカードの効果を確認">
+            <span class="card-cat-pill ${def.category}">${def.categoryLabel}</span>
             <div class="mdc-art">${window.getCardIllustrationSVG(def.id)}</div>
             <div class="mdc-name">${def.name}</div>
-          </div>
+          </button>
         ` : '';
+        document.getElementById('btn-center-discard-card')?.addEventListener('click', () => {
+          this.openCardDetailModal(lastCard, { fromDiscardTop: true });
+        });
       } else {
-        topDiscardEl.innerHTML = `<div class="empty-discard-slot">捨て札なし</div>`;
+        topDiscardEl.innerHTML = `<div class="empty-discard-slot">捨て札 0枚</div>`;
       }
     }
 
@@ -1263,7 +1281,7 @@ class MaigoApp {
       if (isMyTurn && rightNeighbor) {
         if (bannerEl) {
           bannerEl.className = 'turn-banner my-turn-banner phase-step1';
-          bannerEl.innerHTML = `【あなたの手番 - 手順1】右隣の <strong>${this.escapeHTML(rightNeighbor.name)}</strong> の裏向き手札からカードを1枚クリックして引いてください！`;
+          bannerEl.innerHTML = `【手順1：右隣から引く】右隣「<strong>${this.escapeHTML(rightNeighbor.name)}</strong>」の裏向きカードを1枚タップして引いてください`;
         }
         if (drawStageEl) {
           drawStageEl.classList.remove('hidden');
@@ -1277,8 +1295,8 @@ class MaigoApp {
             const disabled = isBlockedByLh || isGuardedByAm;
 
             let badge = `<span class="fd-num">${idx + 1}枚目</span>`;
-            if (isForced) badge = `<span class="fd-badge forced">🔦 灯台指定（これしか引けません）</span>`;
-            if (isGuardedByAm) badge = `<span class="fd-badge guarded">⛩ 御守り守護中（引けません）</span>`;
+            if (isForced) badge = `<span class="fd-badge forced">🔦 灯台指定</span>`;
+            if (isGuardedByAm) badge = `<span class="fd-badge guarded">⛩ 御守り</span>`;
 
             return `
               <button type="button" class="facedown-pick-card ${isForced ? 'is-forced' : ''} ${disabled ? 'is-disabled' : ''}"
@@ -1294,7 +1312,7 @@ class MaigoApp {
           drawStageEl.innerHTML = `
             <div class="step1-draw-box">
               <div class="step1-title">
-                <span>◀ 右隣：<strong>${this.escapeHTML(rightNeighbor.name)}</strong> の手札（全${rightNeighbor.hand.length}枚）から1枚引く</span>
+                ◀ 右隣「<strong>${this.escapeHTML(rightNeighbor.name)}</strong>」の手札（${rightNeighbor.hand.length}枚）から1枚タップして引く
               </div>
               <div class="facedown-cards-fan">${cardsHTML}</div>
             </div>
@@ -1311,7 +1329,7 @@ class MaigoApp {
         if (drawStageEl) drawStageEl.classList.add('hidden');
         if (bannerEl) {
           bannerEl.className = 'turn-banner other-turn-banner';
-          bannerEl.innerHTML = `⏳ <strong>${this.escapeHTML(turnPlayer.name)}</strong> の手番（手順1：右隣の ${this.escapeHTML(rightNeighbor?.name || '')} からカードを1枚引いています…）`;
+          bannerEl.innerHTML = `⏳ <strong>${this.escapeHTML(turnPlayer.name)}</strong> の番（手順1：右隣の ${this.escapeHTML(rightNeighbor?.name || '')} から1枚引いています）`;
         }
       }
     } else if (state.phase === 'TURN_PLAY_CARD') {
@@ -1319,177 +1337,129 @@ class MaigoApp {
       if (isMyTurn) {
         if (bannerEl) {
           bannerEl.className = 'turn-banner my-turn-banner phase-step2';
-          bannerEl.innerHTML = `【あなたの手番 - 手順2】自分の手札からカードを場に出して効果を使用してください（残り行動回数: <strong>${state.actionsRemaining}</strong>）`;
+          bannerEl.innerHTML = `【手順2：カードを使う】手札のカードをタップして効果を確認し、「使用する」で場に出してください（残り行動: <strong>${state.actionsRemaining}</strong>）`;
         }
       } else {
         if (bannerEl) {
           bannerEl.className = 'turn-banner other-turn-banner';
-          bannerEl.innerHTML = `⏳ <strong>${this.escapeHTML(turnPlayer.name)}</strong> の手番（手順2：手札から場に出すカードを選んでいます… 残り行動: ${state.actionsRemaining}）`;
+          bannerEl.innerHTML = `⏳ <strong>${this.escapeHTML(turnPlayer.name)}</strong> の番（手順2：場に出すカードを選んでいます）`;
         }
       }
     } else if (state.phase === 'AWAITING_CHOICE') {
       if (drawStageEl) drawStageEl.classList.add('hidden');
       if (bannerEl) {
         bannerEl.className = 'turn-banner other-turn-banner';
-        bannerEl.innerHTML = `⚡ カード効果の対象・カード選択を処理中です…`;
+        bannerEl.innerHTML = `⚡ カード効果の対象・カードを選択中です…`;
       }
     }
   }
 
-  // 自分の手札と操作バーの描画
+  // 下部：開閉式の手札ドロワーとシンプルカード（効果文なし・タップで詳細＆使用モーダル）
   renderMyHandAndStatus(state, me, turnPlayer, isMyTurn) {
+    const myAreaEl = document.getElementById('my-player-area');
     const myProfileEl = document.getElementById('my-character-profile');
+    const handBodyEl = document.getElementById('hand-drawer-body');
+    const toggleBtnEl = document.getElementById('btn-toggle-hand-drawer');
     const handContainer = document.getElementById('my-hand-cards');
     const actionBar = document.getElementById('my-play-action-bar');
     if (!me) return;
 
-    const ch = window.MAIGO_CHARACTERS.find(c => c.id === me.characterId) || window.MAIGO_CHARACTERS[0];
     const isOide = state.mode === 'oideoide' && me.role === 'oideoide';
+    const canPlayNow = isMyTurn && state.phase === 'TURN_PLAY_CARD' && state.actionsRemaining > 0;
+
+    // 開閉状態の反映
+    myAreaEl?.classList.toggle('drawer-closed', !this.isHandDrawerOpen);
+    handBodyEl?.classList.toggle('hidden', !this.isHandDrawerOpen);
+    if (toggleBtnEl) {
+      toggleBtnEl.innerHTML = this.isHandDrawerOpen
+        ? `▼ 手札を閉じる (${me.hand.length}枚)`
+        : `▲ 手札を開く (${me.hand.length}枚)`;
+      toggleBtnEl.classList.toggle('pulse-open-hint', !this.isHandDrawerOpen && canPlayNow);
+    }
 
     if (myProfileEl) {
       myProfileEl.innerHTML = `
-        <div class="my-avatar-wrap">${window.getCharacterAvatarSVG(ch.avatarType, isOide)}</div>
-        <div class="my-meta-wrap">
-          <div class="my-name-line">
-            <span class="my-name">${this.escapeHTML(me.name)}</span>
-            <span class="my-char-name">（${isOide ? 'おいで、おいで憑依' : ch.name}）</span>
-          </div>
-          ${this.renderLifeOrbsHTML(me.life)}
-        </div>
+        <span class="my-compact-name">👤 ${this.escapeHTML(me.name)}</span>
+        <span class="my-compact-pts">❤️<strong>${me.life}</strong></span>
+        <span class="my-compact-hand">🃏<strong>${me.hand.length}</strong>枚</span>
       `;
     }
 
-    // 選択中のUIDが手札にまだ存在するかフィルタ
-    this.selectedHandUids = this.selectedHandUids.filter(uid => me.hand.some(c => c.uid === uid));
-
-    const canPlayNow = isMyTurn && state.phase === 'TURN_PLAY_CARD' && state.actionsRemaining > 0;
-
     if (handContainer) {
       if (me.hand.length === 0) {
-        handContainer.innerHTML = `<div class="empty-hand-msg">手札はありません（0枚）</div>`;
+        handContainer.innerHTML = `<div class="empty-hand-msg">手札 0枚</div>`;
       } else {
         handContainer.innerHTML = me.hand.map(c => {
           const def = window.MAIGO_CARDS[c.cardId];
           if (!def) return '';
-          const isSelected = this.selectedHandUids.includes(c.uid);
-          const isMaigo = def.category === 'maigo';
           const isLh = me.lighthouseCardUid === c.uid;
           const isAm = me.amuletCardUid === c.uid;
 
           const actionBadge = def.actionBonus > 0
-            ? `<span class="card-action-tag">行動＋${def.actionBonus}</span>`
+            ? `<span class="card-action-tag">＋${def.actionBonus}</span>`
             : '';
 
           let lockTag = '';
-          if (isLh) lockTag = `<div class="card-lock-ribbon lh">🔦 灯台セット中</div>`;
-          if (isAm) lockTag = `<div class="card-lock-ribbon am">⛩ 御守り守護中</div>`;
+          if (isLh) lockTag = `<div class="card-lock-ribbon lh">🔦灯台</div>`;
+          if (isAm) lockTag = `<div class="card-lock-ribbon am">⛩御守</div>`;
 
           return `
-            <div class="game-card ${def.category} ${isSelected ? 'is-selected' : ''} ${!canPlayNow || isMaigo ? 'not-playable' : ''}"
+            <button type="button" class="game-card simple-tap-card ${def.category} ${canPlayNow && def.category !== 'maigo' ? 'can-use-now' : ''}"
                  data-card-uid="${c.uid}" data-card-id="${def.id}">
               ${lockTag}
               <div class="card-top-bar">
                 <span class="card-cat-pill ${def.category}">${def.categoryLabel}</span>
                 ${actionBadge}
               </div>
-              <div class="card-title-row">${def.name}</div>
               <div class="card-illustration">${window.getCardIllustrationSVG(def.id)}</div>
-              <div class="card-desc-box">${def.description}</div>
-            </div>
+              <div class="card-title-row">${def.name}</div>
+              <div class="card-tap-hint">${canPlayNow && def.category !== 'maigo' ? 'タップで効果・使用' : 'タップで効果確認'}</div>
+            </button>
           `;
         }).join('');
 
         handContainer.querySelectorAll('.game-card').forEach(cardEl => {
           cardEl.addEventListener('mouseenter', () => window.maigoAudio.playCardHover());
           cardEl.addEventListener('click', () => {
-            if (!canPlayNow) return;
             const uid = cardEl.dataset.cardUid;
-            const cardId = cardEl.dataset.cardId;
-            if (cardId === 'maigo') {
-              return; // 迷子は場に出せない
+            const cardObj = me.hand.find(c => c.uid === uid);
+            if (cardObj) {
+              this.openCardDetailModal(cardObj, { fromHand: true });
             }
-            this.onHandCardClicked(me, uid, cardId);
           });
         });
       }
     }
 
-    // アクションバー（カードを出すボタン・壊れた街灯路まとめ出しボタン・追加行動終了ボタン）
+    // 中央フィールドのサブ操作ボタン（手札が閉じている時に開くボタン／追加行動終了ボタン／おいでおいでパスボタン）
     if (actionBar) {
-      if (!canPlayNow) {
-        actionBar.innerHTML = '';
-        return;
-      }
-
       const buttons = [];
-      const selectedCards = this.selectedHandUids.map(u => me.hand.find(c => c.uid === u)).filter(Boolean);
-
-      if (selectedCards.length > 0) {
-        const firstDef = window.MAIGO_CARDS[selectedCards[0].cardId];
-        const remainingHand = me.hand.filter(c => !this.selectedHandUids.includes(c.uid));
-        const wouldBeBad = !isOide && window.MaigoGameEngine.isHandBadEndCondition(remainingHand);
-
-        // 壊れた街灯路を持っている枚数チェック
-        const allBrokenInHand = me.hand.filter(c => c.cardId === 'broken_streetlight');
-        if (firstDef.id === 'broken_streetlight' && allBrokenInHand.length >= 2) {
-          buttons.push(`
-            <button type="button" class="btn-primary btn-play-card" id="btn-confirm-play-selected">
-              【壊れた街灯路】を ${selectedCards.length}枚 場に出す
-            </button>
-          `);
-          if (selectedCards.length < allBrokenInHand.length) {
-            buttons.push(`
-              <button type="button" class="btn-accent" id="btn-select-all-broken">
-                ⚡ 壊れた街灯路をすべて（${allBrokenInHand.length}枚）まとめて出す！
-              </button>
-            `);
-          }
-        } else {
-          buttons.push(`
-            <button type="button" class="btn-primary btn-play-card" id="btn-confirm-play-selected">
-              【${firstDef.name}】を場に出して効果を使用する
-            </button>
-          `);
-        }
-
-        if (wouldBeBad) {
-          buttons.push(`
-            <span class="self-bad-warning">
-              ⚠️ 注意：このカードを出して効果終了時に「あかり」が0枚（迷子あり）のままだと【BAD END】になります！
-            </span>
-          `);
-        }
-      } else {
-        buttons.push(`<span class="play-hint-text">▲ 手札から場に出すカードをクリックして選択してください（「迷子」は出せません）</span>`);
+      if (canPlayNow && !this.isHandDrawerOpen) {
+        buttons.push(`
+          <button type="button" class="btn-primary" id="btn-center-open-hand">
+            ▲ 手札を開いてカードを使う（${me.hand.length}枚）
+          </button>
+        `);
       }
-
-      // すでに1枚以上出している場合（行動＋1／＋2の追加行動中）は任意で手番を終えられる
-      if (state.hasPlayedAtLeastOneCard) {
+      if (canPlayNow && state.hasPlayedAtLeastOneCard) {
         buttons.push(`
           <button type="button" class="btn-secondary" id="btn-voluntary-end-turn">
-            追加でカードを出さずに手番を終了する
+            追加でカードを出さずに手番を終了する ▶
           </button>
         `);
       }
-
-      // 「おいで、おいで」で手札が「迷子」のみの場合は何も出さずに番を終えられる
-      if (isOide && window.MaigoGameEngine.isHandOnlyMaigo(me.hand)) {
+      if (canPlayNow && isOide && window.MaigoGameEngine.isHandOnlyMaigo(me.hand)) {
         buttons.push(`
           <button type="button" class="btn-danger" id="btn-oide-pass-turn">
-            手札が「迷子」のみのため、何も出さずに番を終える
+            手札が「迷子」のみのため、何も出さずに番を終える ▶
           </button>
         `);
       }
-
       actionBar.innerHTML = buttons.join('');
 
-      document.getElementById('btn-confirm-play-selected')?.addEventListener('click', () => {
-        this.handlePlaySelectedCards();
-      });
-      document.getElementById('btn-select-all-broken')?.addEventListener('click', () => {
-        const allBroken = me.hand.filter(c => c.cardId === 'broken_streetlight').map(c => c.uid);
-        this.selectedHandUids = allBroken;
-        this.handlePlaySelectedCards();
+      document.getElementById('btn-center-open-hand')?.addEventListener('click', () => {
+        this.isHandDrawerOpen = true;
+        this.renderGameScreen();
       });
       document.getElementById('btn-voluntary-end-turn')?.addEventListener('click', () => {
         this.handleVoluntaryEndTurn();
@@ -1500,29 +1470,148 @@ class MaigoApp {
     }
   }
 
-  onHandCardClicked(me, uid, cardId) {
-    if (cardId === 'broken_streetlight') {
-      // 壊れた街灯路は複数枚トグル選択可能
-      const currentlyAllBroken = this.selectedHandUids.every(u => {
-        const c = me.hand.find(h => h.uid === u);
-        return c && c.cardId === 'broken_streetlight';
-      });
-      if (!currentlyAllBroken) {
-        this.selectedHandUids = [uid];
-      } else if (this.selectedHandUids.includes(uid)) {
-        this.selectedHandUids = this.selectedHandUids.filter(u => u !== uid);
+  // ==========================================================================
+  // カード詳細＆使用モーダル（いつでもカードをタップして効果確認＆そこから使用）
+  // ==========================================================================
+  openCardDetailModal(cardObj, options = {}) {
+    const modal = document.getElementById('card-detail-modal');
+    if (!modal || !cardObj) return;
+    const def = window.MAIGO_CARDS[cardObj.cardId || cardObj.id];
+    if (!def) return;
+
+    const state = this.gameState;
+    const me = state?.players.find(p => p.id === this.myPlayerId) || state?.players[0];
+    const turnPlayer = state ? state.players[state.turnPlayerIndex] : null;
+    const isMyTurn = Boolean(state && me && turnPlayer && turnPlayer.id === me.id && me.roundStatus === 'ACTIVE');
+    const canPlayNow = Boolean(options.fromHand && isMyTurn && state.phase === 'TURN_PLAY_CARD' && state.actionsRemaining > 0);
+    const isOide = Boolean(state && me && state.mode === 'oideoide' && me.role === 'oideoide');
+
+    const actionBadge = def.actionBonus > 0
+      ? `<span class="card-action-tag">行動＋${def.actionBonus}</span>`
+      : '';
+
+    let useSectionHTML = '';
+    if (options.fromHand && me) {
+      if (def.category === 'maigo') {
+        useSectionHTML = `<div class="cdm-status-note danger">※「迷子」カードは場に出して使用することができません。</div>`;
+      } else if (canPlayNow) {
+        const remainingHand = me.hand.filter(c => c.uid !== cardObj.uid);
+        const wouldBeBad = !isOide && window.MaigoGameEngine.isHandBadEndCondition(remainingHand);
+        const warnHTML = wouldBeBad
+          ? `<div class="cdm-bad-warning">⚠️ 注意：このカードを使用して効果終了時に「あかり」が0枚（迷子あり）のままだと【BAD END】になります！</div>`
+          : '';
+
+        const allBroken = me.hand.filter(c => c.cardId === 'broken_streetlight');
+        if (def.id === 'broken_streetlight' && allBroken.length >= 2) {
+          useSectionHTML = `
+            ${warnHTML}
+            <div class="cdm-use-buttons">
+              <button type="button" class="btn-primary btn-lg" id="btn-cdm-use-single">
+                🔥 1枚だけ使用する（場に出す）
+              </button>
+              <button type="button" class="btn-accent btn-lg" id="btn-cdm-use-all-broken">
+                ⚡ 手札の「壊れた街灯路」全 ${allBroken.length}枚 をまとめて使用する！
+              </button>
+            </div>
+          `;
+        } else {
+          useSectionHTML = `
+            ${warnHTML}
+            <div class="cdm-use-buttons">
+              <button type="button" class="btn-primary btn-lg" id="btn-cdm-use-single">
+                🔥 このカードを使用する（場に出す）
+              </button>
+            </div>
+          `;
+        }
+      } else if (isMyTurn && state?.phase === 'TURN_DRAW_FROM_RIGHT') {
+        useSectionHTML = `<div class="cdm-status-note">💡 先に画面中央の【手順1】で右隣のプレイヤーからカードを1枚引いてください。</div>`;
       } else {
-        this.selectedHandUids.push(uid);
+        useSectionHTML = `<div class="cdm-status-note">（現在はカード効果の確認のみ可能です。自分の手番の手順2で使用できます）</div>`;
       }
-    } else {
-      if (this.selectedHandUids.length === 1 && this.selectedHandUids[0] === uid) {
-        // 同じカードをもう一度クリックしたら即座にプレイ！
-        this.handlePlaySelectedCards();
-        return;
-      }
-      this.selectedHandUids = [uid];
+    } else if (options.fromDiscardTop) {
+      useSectionHTML = `
+        <div class="cdm-use-buttons">
+          <button type="button" class="btn-secondary" id="btn-cdm-open-all-discard">
+            🗑 捨て札一覧をすべて見る
+          </button>
+        </div>
+      `;
     }
-    this.renderGameScreen();
+
+    modal.innerHTML = `
+      <div class="modal-box card-detail-modal-box ${def.category}">
+        <div class="cdm-top-row">
+          <div class="cdm-badges">
+            <span class="card-cat-pill ${def.category}">${def.categoryLabel}</span>
+            ${actionBadge}
+          </div>
+          <button type="button" class="btn-secondary btn-sm" id="btn-cdm-close">閉じる ✕</button>
+        </div>
+
+        <div class="cdm-title">${def.name}</div>
+        <div class="cdm-art-wrap">${window.getCardIllustrationSVG(def.id)}</div>
+
+        <div class="cdm-effect-box">
+          <div class="cdm-effect-label">【カードの効果】</div>
+          <div class="cdm-effect-text">${this.escapeHTML(def.description)}</div>
+        </div>
+
+        <div class="cdm-flavor">${this.escapeHTML(def.flavor)}</div>
+
+        ${useSectionHTML}
+      </div>
+    `;
+
+    modal.classList.remove('hidden');
+
+    const closeModal = () => {
+      modal.classList.add('hidden');
+      modal.innerHTML = '';
+    };
+
+    document.getElementById('btn-cdm-close')?.addEventListener('click', closeModal);
+    modal.addEventListener('click', e => {
+      if (e.target === modal) closeModal();
+    }, { once: true });
+
+    document.getElementById('btn-cdm-use-single')?.addEventListener('click', () => {
+      closeModal();
+      this.selectedHandUids = [cardObj.uid];
+      this.handlePlaySelectedCards();
+    });
+
+    document.getElementById('btn-cdm-use-all-broken')?.addEventListener('click', () => {
+      closeModal();
+      const allBrokenUids = (me?.hand || []).filter(c => c.cardId === 'broken_streetlight').map(c => c.uid);
+      this.selectedHandUids = allBrokenUids;
+      this.handlePlaySelectedCards();
+    });
+
+    document.getElementById('btn-cdm-open-all-discard')?.addEventListener('click', () => {
+      closeModal();
+      this.openDiscardInspectModal();
+    });
+  }
+
+  // モーダル内で選択中カードの効果を大きく表示する共通プレビューHTML
+  renderCardEffectPreviewBoxHTML(cardObj) {
+    if (!cardObj) return '';
+    const def = window.MAIGO_CARDS[cardObj.cardId || cardObj.id];
+    if (!def) return '';
+    const actionBadge = def.actionBonus > 0
+      ? `<span class="card-action-tag">行動＋${def.actionBonus}</span>`
+      : '';
+    return `
+      <div class="modal-effect-preview-box ${def.category}">
+        <div class="mep-header">
+          <span class="card-cat-pill ${def.category}">${def.categoryLabel}</span>
+          <span class="mep-name">【${def.name}】の効果</span>
+          ${actionBadge}
+        </div>
+        <div class="mep-desc">${this.escapeHTML(def.description)}</div>
+      </div>
+    `;
   }
 
   // ==========================================================================
@@ -1563,25 +1652,25 @@ class MaigoApp {
 
   handleSubmitChoice(choiceData) {
     if (!this.gameState) return;
+    this.modalPreviewCardUid = null;
+    this.conveniencePhase = 1;
     const res = window.MaigoGameEngine.submitPendingChoice(this.gameState, this.myPlayerId, choiceData);
     if (!res.ok) return;
     this.syncGameState();
   }
 
   // ==========================================================================
-  // カード効果モーダル・ラウンド結果モーダル・最終結果モーダル
+  // カード効果モーダル（いつでもカード効果確認可能＋コンビニ2フェーズ方式）
   // ==========================================================================
   renderActiveModal(state, me) {
     const modalOverlay = document.getElementById('action-modal-overlay');
     if (!modalOverlay) return;
 
-    // 1. ラウンド終了・最終結果画面
     if (state.phase === 'ROUND_END' || state.phase === 'GAME_OVER') {
       this.renderRoundOrFinalModal(state, modalOverlay);
       return;
     }
 
-    // 2. カード効果の選択待ち（AWAITING_CHOICE）
     if (state.phase === 'AWAITING_CHOICE' && state.pendingAction) {
       this.renderPendingChoiceModal(state, me, modalOverlay);
       return;
@@ -1595,7 +1684,6 @@ class MaigoApp {
     const pa = state.pendingAction;
     const myId = me.id;
 
-    // 自分が選択すべき対象か判定
     let isMyChoice = false;
     if (pa.type === 'TUNNEL_DISCARD' || pa.type === 'RIVER_PASS') {
       isMyChoice = pa.requiredPlayerIds.includes(myId) && !pa.selections[myId];
@@ -1646,64 +1734,150 @@ class MaigoApp {
         break;
       }
 
-      // コンビニ：山札の上から3枚を見て、1枚手札に加え、残りを好きな順番で山札の上に戻す
+      // コンビニ：わかりやすい2フェーズ方式（フェーズ1：手札に加える1枚を選ぶ → フェーズ2：残りを並べ替える）
       case 'CONVENIENCE_PICK': {
         const topCards = pa.topCards || [];
         if (!this.convenienceSelectedTakeUid || !topCards.some(c => c.uid === this.convenienceSelectedTakeUid)) {
           this.convenienceSelectedTakeUid = topCards[0]?.uid || null;
           this.convenienceOrderUids = topCards.filter(c => c.uid !== this.convenienceSelectedTakeUid).map(c => c.uid);
+          this.conveniencePhase = 1;
         }
 
         const renderConv = () => {
-          const cardsHTML = topCards.map(c => {
-            const def = window.MAIGO_CARDS[c.cardId];
-            const isTake = c.uid === this.convenienceSelectedTakeUid;
-            const orderIdx = this.convenienceOrderUids.indexOf(c.uid);
-            const badge = isTake
-              ? `<div class="conv-badge take">✋ 手札に加える</div>`
-              : `<div class="conv-badge return">山札の上から ${orderIdx + 1} 番目に戻す</div>`;
-            return `
-              <div class="modal-pick-card ${def.category} ${isTake ? 'selected' : ''}" data-conv-uid="${c.uid}">
-                ${badge}
-                <div class="mpc-title">${def.name}</div>
-                <div class="mpc-art">${window.getCardIllustrationSVG(def.id)}</div>
-                <div class="mpc-cat">${def.categoryLabel}</div>
+          if (this.conveniencePhase === 1 || topCards.length <= 1) {
+            // フェーズ1：手札に加える1枚を選ぶ（タップでそのカードの効果を表示！）
+            const selectedObj = topCards.find(c => c.uid === this.convenienceSelectedTakeUid) || topCards[0];
+            const selectedDef = window.MAIGO_CARDS[selectedObj?.cardId];
+
+            const cardsHTML = topCards.map(c => {
+              const def = window.MAIGO_CARDS[c.cardId];
+              const isTake = c.uid === this.convenienceSelectedTakeUid;
+              return `
+                <button type="button" class="modal-pick-card ${def.category} ${isTake ? 'selected' : ''}" data-conv-uid="${c.uid}">
+                  <div class="conv-badge ${isTake ? 'take' : 'return'}">${isTake ? '✋ 選択中（手札へ）' : 'タップで効果確認'}</div>
+                  <div class="mpc-art">${window.getCardIllustrationSVG(def.id)}</div>
+                  <div class="mpc-title">${def.name}</div>
+                  <div class="mpc-cat">${def.categoryLabel}</div>
+                </button>
+              `;
+            }).join('');
+
+            modalOverlay.innerHTML = `
+              <div class="modal-box modal-wide">
+                <div class="modal-step-indicator">STEP 1 / 2 ： 手札に加えるカードを選ぶ</div>
+                <div class="modal-title">🏪 【コンビニ①】手札に加えるカードを1枚選んでください</div>
+                <div class="modal-desc">
+                  山札の上から${topCards.length}枚を見ています。カードをタップすると下に<strong>効果の詳細</strong>が表示されます。
+                </div>
+                <div class="modal-cards-grid">${cardsHTML}</div>
+                ${this.renderCardEffectPreviewBoxHTML(selectedObj)}
+                <div class="modal-actions">
+                  ${topCards.length >= 2
+                    ? `<button type="button" class="btn-primary" id="btn-conv-to-step2">✋「${selectedDef?.name || ''}」を手札に選び、残りの並べ替えへ進む ▶</button>`
+                    : `<button type="button" class="btn-primary" id="btn-conv-confirm">✅「${selectedDef?.name || ''}」を手札に加えて完了</button>`
+                  }
+                </div>
               </div>
             `;
-          }).join('');
 
-          modalOverlay.innerHTML = `
-            <div class="modal-box modal-wide">
-              <div class="modal-title">🏪 【コンビニ】山札の上から${topCards.length}枚を確認</div>
-              <div class="modal-desc">
-                手札に加えるカードを1枚クリックして選び、残りのカードを山札の上に戻す順番を確認してください。
-              </div>
-              <div class="modal-cards-grid">${cardsHTML}</div>
-              <div class="modal-actions">
-                ${this.convenienceOrderUids.length >= 2 ? `<button type="button" class="btn-secondary" id="btn-conv-swap-order">🔄 山札に戻す2枚の順番を入れ替える</button>` : ''}
-                <button type="button" class="btn-primary" id="btn-conv-confirm">この内容で決定する</button>
-              </div>
-            </div>
-          `;
+            modalOverlay.querySelectorAll('[data-conv-uid]').forEach(el => {
+              el.addEventListener('click', () => {
+                this.convenienceSelectedTakeUid = el.dataset.convUid;
+                this.convenienceOrderUids = topCards.filter(c => c.uid !== this.convenienceSelectedTakeUid).map(c => c.uid);
+                renderConv();
+              });
+            });
 
-          modalOverlay.querySelectorAll('[data-conv-uid]').forEach(el => {
-            el.addEventListener('click', () => {
-              this.convenienceSelectedTakeUid = el.dataset.convUid;
-              this.convenienceOrderUids = topCards.filter(c => c.uid !== this.convenienceSelectedTakeUid).map(c => c.uid);
+            document.getElementById('btn-conv-to-step2')?.addEventListener('click', () => {
+              this.conveniencePhase = 2;
+              this.modalPreviewCardUid = this.convenienceOrderUids[0] || null;
               renderConv();
             });
-          });
-          document.getElementById('btn-conv-swap-order')?.addEventListener('click', () => {
-            this.convenienceOrderUids.reverse();
-            renderConv();
-          });
-          document.getElementById('btn-conv-confirm')?.addEventListener('click', () => {
-            const takeUid = this.convenienceSelectedTakeUid;
-            const orderUids = [...this.convenienceOrderUids];
-            this.convenienceSelectedTakeUid = null;
-            this.convenienceOrderUids = [];
-            this.handleSubmitChoice({ takeCardUid: takeUid, returnOrderUids: orderUids });
-          });
+
+            document.getElementById('btn-conv-confirm')?.addEventListener('click', () => {
+              const takeUid = this.convenienceSelectedTakeUid;
+              const orderUids = [...this.convenienceOrderUids];
+              this.convenienceSelectedTakeUid = null;
+              this.convenienceOrderUids = [];
+              this.conveniencePhase = 1;
+              this.handleSubmitChoice({ takeCardUid: takeUid, returnOrderUids: orderUids });
+            });
+          } else {
+            // フェーズ2：残りのカードを山札の上に戻す順番を並べ替える
+            const takenObj = topCards.find(c => c.uid === this.convenienceSelectedTakeUid);
+            const takenDef = window.MAIGO_CARDS[takenObj?.cardId];
+            const remainingCards = this.convenienceOrderUids
+              .map(uid => topCards.find(c => c.uid === uid))
+              .filter(Boolean);
+
+            const previewTarget = remainingCards.find(c => c.uid === this.modalPreviewCardUid) || remainingCards[0];
+
+            const remainHTML = remainingCards.map((c, idx) => {
+              const def = window.MAIGO_CARDS[c.cardId];
+              const isInspected = previewTarget && previewTarget.uid === c.uid;
+              const posLabel = idx === 0
+                ? '▲ 山札の【1番上】（次に引かれる）'
+                : `▼ 山札の上から【${idx + 1}番目】`;
+              return `
+                <button type="button" class="modal-pick-card ${def.category} ${isInspected ? 'selected' : ''}" data-conv-inspect-uid="${c.uid}">
+                  <div class="conv-badge ${idx === 0 ? 'take' : 'return'}">${posLabel}</div>
+                  <div class="mpc-art">${window.getCardIllustrationSVG(def.id)}</div>
+                  <div class="mpc-title">${def.name}</div>
+                  <div class="mpc-cat">${def.categoryLabel}</div>
+                </button>
+              `;
+            }).join('');
+
+            modalOverlay.innerHTML = `
+              <div class="modal-box modal-wide">
+                <div class="modal-step-indicator">STEP 2 / 2 ： 残りのカードを山札の上に戻す順番</div>
+                <div class="modal-title">🏪 【コンビニ②】山札の上に戻す順番を決めてください</div>
+                <div class="modal-desc">
+                  手札に加えるカード：<strong>【${takenDef?.name || ''}】</strong><br>
+                  残りのカードを山札の上に戻す順番を確認してください（カードをタップすると効果を確認できます）。
+                </div>
+                <div class="modal-cards-grid">${remainHTML}</div>
+                ${remainingCards.length >= 2 ? `
+                  <div style="text-align:center; margin-bottom:10px;">
+                    <button type="button" class="btn-accent" id="btn-conv-swap-order">
+                      ⇅ 1番上と2番目の順番を入れ替える
+                    </button>
+                  </div>
+                ` : ''}
+                ${this.renderCardEffectPreviewBoxHTML(previewTarget)}
+                <div class="modal-actions">
+                  <button type="button" class="btn-secondary" id="btn-conv-back-step1">◀ STEP 1 に戻ってカードを選び直す</button>
+                  <button type="button" class="btn-primary" id="btn-conv-confirm">✅ この順番で山札に戻して完了</button>
+                </div>
+              </div>
+            `;
+
+            modalOverlay.querySelectorAll('[data-conv-inspect-uid]').forEach(el => {
+              el.addEventListener('click', () => {
+                this.modalPreviewCardUid = el.dataset.convInspectUid;
+                renderConv();
+              });
+            });
+
+            document.getElementById('btn-conv-swap-order')?.addEventListener('click', () => {
+              this.convenienceOrderUids.reverse();
+              renderConv();
+            });
+
+            document.getElementById('btn-conv-back-step1')?.addEventListener('click', () => {
+              this.conveniencePhase = 1;
+              renderConv();
+            });
+
+            document.getElementById('btn-conv-confirm')?.addEventListener('click', () => {
+              const takeUid = this.convenienceSelectedTakeUid;
+              const orderUids = [...this.convenienceOrderUids];
+              this.convenienceSelectedTakeUid = null;
+              this.convenienceOrderUids = [];
+              this.conveniencePhase = 1;
+              this.handleSubmitChoice({ takeCardUid: takeUid, returnOrderUids: orderUids });
+            });
+          }
         };
         renderConv();
         break;
@@ -1732,49 +1906,82 @@ class MaigoApp {
         break;
       }
 
-      // 灯台・御守り・コインランドリー手札選択・水族館・川・トンネル
+      // 灯台・御守り・コインランドリー手札選択・水族館・川・トンネル・振り向く
+      // タップで効果プレビューを表示し、確認ボタンで決定する初心者安心設計
       case 'LIGHTHOUSE_PICK':
       case 'AMULET_PICK':
       case 'COIN_LAUNDRY_CARD':
       case 'AQUARIUM_PICK':
       case 'RIVER_PASS':
-      case 'TUNNEL_DISCARD': {
+      case 'TUNNEL_DISCARD':
+      case 'LOOK_BACK_PICK': {
         const titles = {
-          LIGHTHOUSE_PICK: '🔦 【灯台】次の手番のプレイヤーに強制的に引かせる自分の手札を1枚選んでください',
-          AMULET_PICK: '⛩ 【御守り】次の手番のプレイヤーに引かれないよう保護する自分の手札を1枚選んでください',
-          COIN_LAUNDRY_CARD: '🧺 【コインランドリー】山札の一番上のカードと入れ替える自分の手札を1枚選んでください',
-          AQUARIUM_PICK: '🐠 【水族館】全員でシャッフルして配り直すために出す自分の手札を1枚選んでください',
-          RIVER_PASS: '🌊 【川】左隣のプレイヤーに渡す自分の手札を1枚選んでください',
-          TUNNEL_DISCARD: '🚇 【トンネル】手札に「あかり」が2枚以上あるため、捨てる「あかり」カードを1枚選んでください'
+          LIGHTHOUSE_PICK: '🔦 【灯台】次の手番の相手に強制的に引かせる手札を1枚選んでください',
+          AMULET_PICK: '⛩ 【御守り】次の手番の相手に引かれないよう守る手札を1枚選んでください',
+          COIN_LAUNDRY_CARD: '🧺 【コインランドリー】山札の一番上と入れ替える手札を1枚選んでください',
+          AQUARIUM_PICK: '🐠 【水族館】全員でシャッフルして配り直すために出す手札を1枚選んでください',
+          RIVER_PASS: '🌊 【川】左隣のプレイヤーに渡す手札を1枚選んでください',
+          TUNNEL_DISCARD: '🚇 【トンネル】手札から捨てる「あかり」カードを1枚選んでください',
+          LOOK_BACK_PICK: '👣 【振り向く】捨て札からあなたの手札に回収するカードを1枚選んでください'
         };
 
-        const selectableCards = pa.type === 'TUNNEL_DISCARD'
-          ? me.hand.filter(c => window.MAIGO_CARDS[c.cardId]?.category === 'light')
-          : me.hand;
+        let selectableCards = me.hand;
+        if (pa.type === 'TUNNEL_DISCARD') {
+          selectableCards = me.hand.filter(c => window.MAIGO_CARDS[c.cardId]?.category === 'light');
+        } else if (pa.type === 'LOOK_BACK_PICK') {
+          selectableCards = state.discardPile;
+        }
 
-        const cardsHTML = selectableCards.map(c => {
-          const def = window.MAIGO_CARDS[c.cardId];
-          return `
-            <div class="modal-pick-card ${def.category}" data-pick-uid="${c.uid}">
-              <div class="mpc-title">${def.name}</div>
-              <div class="mpc-art">${window.getCardIllustrationSVG(def.id)}</div>
-              <div class="mpc-cat">${def.categoryLabel}</div>
+        if (!this.modalPreviewCardUid || !selectableCards.some(c => c.uid === this.modalPreviewCardUid)) {
+          this.modalPreviewCardUid = selectableCards[0]?.uid || null;
+        }
+
+        const renderPickModal = () => {
+          const selectedObj = selectableCards.find(c => c.uid === this.modalPreviewCardUid) || selectableCards[0];
+          const selectedDef = window.MAIGO_CARDS[selectedObj?.cardId];
+
+          const cardsHTML = selectableCards.map(c => {
+            const def = window.MAIGO_CARDS[c.cardId];
+            const isSel = selectedObj && selectedObj.uid === c.uid;
+            return `
+              <button type="button" class="modal-pick-card ${def.category} ${isSel ? 'selected' : ''}" data-pick-uid="${c.uid}">
+                <div class="conv-badge ${isSel ? 'take' : 'return'}">${isSel ? '✓ 選択中' : 'タップで確認'}</div>
+                <div class="mpc-art">${window.getCardIllustrationSVG(def.id)}</div>
+                <div class="mpc-title">${def.name}</div>
+                <div class="mpc-cat">${def.categoryLabel}</div>
+              </button>
+            `;
+          }).join('');
+
+          modalOverlay.innerHTML = `
+            <div class="modal-box modal-wide">
+              <div class="modal-title">${titles[pa.type]}</div>
+              <div class="modal-desc">カードをタップすると下に効果が表示されます。確認して決定ボタンを押してください。</div>
+              <div class="modal-cards-grid scrollable-grid">${cardsHTML}</div>
+              ${this.renderCardEffectPreviewBoxHTML(selectedObj)}
+              <div class="modal-actions">
+                <button type="button" class="btn-primary" id="btn-confirm-card-pick">
+                  ✅「${selectedDef?.name || ''}」に決定する
+                </button>
+              </div>
             </div>
           `;
-        }).join('');
 
-        modalOverlay.innerHTML = `
-          <div class="modal-box modal-wide">
-            <div class="modal-title">${titles[pa.type]}</div>
-            <div class="modal-cards-grid">${cardsHTML}</div>
-          </div>
-        `;
-
-        modalOverlay.querySelectorAll('[data-pick-uid]').forEach(el => {
-          el.addEventListener('click', () => {
-            this.handleSubmitChoice({ cardUid: el.dataset.pickUid });
+          modalOverlay.querySelectorAll('[data-pick-uid]').forEach(el => {
+            el.addEventListener('click', () => {
+              this.modalPreviewCardUid = el.dataset.pickUid;
+              renderPickModal();
+            });
           });
-        });
+
+          document.getElementById('btn-confirm-card-pick')?.addEventListener('click', () => {
+            if (selectedObj) {
+              this.handleSubmitChoice({ cardUid: selectedObj.uid });
+            }
+          });
+        };
+
+        renderPickModal();
         break;
       }
 
@@ -1806,7 +2013,7 @@ class MaigoApp {
               <div class="mtp-avatar">${window.getCharacterAvatarSVG(ch.avatarType)}</div>
               <div class="mtp-info">
                 <div class="mtp-name">${this.escapeHTML(p.name)} ${p.id === me.id ? '（あなた）' : ''}</div>
-                <div class="mtp-meta">手札: <strong>${p.hand.length}枚</strong> ／ ライフ: <strong>${p.life}/7</strong></div>
+                <div class="mtp-meta">🃏手札: <strong>${p.hand.length}枚</strong> ／ ❤️ライフ: <strong>${p.life}/7</strong></div>
               </div>
             </button>
           `;
@@ -1827,62 +2034,53 @@ class MaigoApp {
         break;
       }
 
-      // うわさ話：山札の確認＆迷子を山札の一番上にセット
+      // うわさ話：山札の確認＆迷子を山札の一番上にセット（各カードをタップで効果確認可能！）
       case 'RUMOR_INSPECT': {
         const inspected = pa.inspectedCards || [];
-        const cardsHTML = inspected.map(c => {
-          const def = window.MAIGO_CARDS[c.cardId];
-          return `
-            <div class="mini-inspect-chip ${def.category}">
-              ${def.name}
+        if (!this.modalPreviewCardUid && inspected.length > 0) {
+          this.modalPreviewCardUid = inspected[0].uid;
+        }
+
+        const renderRumor = () => {
+          const selectedObj = inspected.find(c => c.uid === this.modalPreviewCardUid) || inspected[0];
+          const cardsHTML = inspected.map(c => {
+            const def = window.MAIGO_CARDS[c.cardId];
+            const isSel = selectedObj && selectedObj.uid === c.uid;
+            return `
+              <button type="button" class="mini-inspect-chip ${def.category} ${isSel ? 'selected' : ''}" data-rumor-uid="${c.uid}">
+                ${def.name}
+              </button>
+            `;
+          }).join('');
+
+          modalOverlay.innerHTML = `
+            <div class="modal-box modal-wide">
+              <div class="modal-title">🗣 【${window.MAIGO_CARDS[pa.cardId]?.name}】山札の内容確認</div>
+              <div class="modal-desc">
+                ${pa.foundMaigo
+                  ? '🩸 <strong>山札の中に「迷子」が見つかりました！</strong> 山札をよく切った後、「迷子」1枚を<strong>山札の一番上</strong>に置きました！'
+                  : '山札の中に「迷子」はありませんでした（すべて誰かの手札にあります）。山札をよく切りました。'}
+                <br><small>※カード名をタップすると下にそのカードの効果が表示されます。</small>
+              </div>
+              <div class="inspect-cards-wrap">${cardsHTML || '<span>山札0枚</span>'}</div>
+              ${this.renderCardEffectPreviewBoxHTML(selectedObj)}
+              <div class="modal-actions">
+                <button type="button" class="btn-primary" id="btn-rumor-ok">確認完了</button>
+              </div>
             </div>
           `;
-        }).join('');
 
-        modalOverlay.innerHTML = `
-          <div class="modal-box modal-wide">
-            <div class="modal-title">🗣 【${window.MAIGO_CARDS[pa.cardId]?.name}】山札の内容確認</div>
-            <div class="modal-desc">
-              ${pa.foundMaigo
-                ? '🩸 <strong>山札の中に「迷子」が見つかりました！</strong> 山札をよく切った後、「迷子」1枚を<strong>山札の一番上</strong>に置きました！'
-                : '山札の中に「迷子」はありませんでした（すべて誰かの手札にあります）。山札をよく切りました。'}
-            </div>
-            <div class="inspect-cards-wrap">${cardsHTML || '<span>山札0枚</span>'}</div>
-            <div class="modal-actions">
-              <button type="button" class="btn-primary" id="btn-rumor-ok">確認完了</button>
-            </div>
-          </div>
-        `;
-        document.getElementById('btn-rumor-ok')?.addEventListener('click', () => {
-          this.handleSubmitChoice({ confirmed: true });
-        });
-        break;
-      }
-
-      // 振り向く：捨て札から好きなカードを1枚回収
-      case 'LOOK_BACK_PICK': {
-        const cardsHTML = state.discardPile.map(c => {
-          const def = window.MAIGO_CARDS[c.cardId];
-          return `
-            <div class="modal-pick-card ${def.category}" data-discard-uid="${c.uid}">
-              <div class="mpc-title">${def.name}</div>
-              <div class="mpc-art">${window.getCardIllustrationSVG(def.id)}</div>
-              <div class="mpc-cat">${def.categoryLabel}</div>
-            </div>
-          `;
-        }).join('');
-
-        modalOverlay.innerHTML = `
-          <div class="modal-box modal-wide">
-            <div class="modal-title">👣 【振り向く】捨て札から手札に加えるカードを1枚選んでください</div>
-            <div class="modal-cards-grid scrollable-grid">${cardsHTML}</div>
-          </div>
-        `;
-        modalOverlay.querySelectorAll('[data-discard-uid]').forEach(el => {
-          el.addEventListener('click', () => {
-            this.handleSubmitChoice({ cardUid: el.dataset.discardUid });
+          modalOverlay.querySelectorAll('[data-rumor-uid]').forEach(btn => {
+            btn.addEventListener('click', () => {
+              this.modalPreviewCardUid = btn.dataset.rumorUid;
+              renderRumor();
+            });
           });
-        });
+          document.getElementById('btn-rumor-ok')?.addEventListener('click', () => {
+            this.handleSubmitChoice({ confirmed: true });
+          });
+        };
+        renderRumor();
         break;
       }
     }
@@ -1939,33 +2137,48 @@ class MaigoApp {
         <div class="modal-actions">
           ${!isGameOver ? (
             canProceed
-              ? `<button type="button" class="btn-primary" id="btn-next-round">第 ${state.currentRound + 1} ラウンドへ進む ▶</button>`
-              : `<span class="waiting-host-msg">ホストが次のラウンドを開始するのを待っています…</span>`
+              ? `
+                <button type="button" class="btn-secondary" id="btn-back-lobby">🚪 ロビーへ戻る</button>
+                <button type="button" class="btn-primary" id="btn-next-round">第 ${state.currentRound + 1} ラウンドへ進む ▶</button>
+              `
+              : `
+                <span class="waiting-host-msg">ホストが次のラウンドを開始するのを待っています…</span>
+                <button type="button" class="btn-secondary" id="btn-back-lobby">🚪 ロビーへ戻る</button>
+              `
           ) : (
             canProceed
-              ? `<button type="button" class="btn-primary" id="btn-back-waiting">ルーム設定画面に戻る</button>`
-              : `<button type="button" class="btn-secondary" id="btn-back-lobby">ロビーへ戻る</button>`
+              ? `
+                <button type="button" class="btn-secondary" id="btn-back-lobby">🚪 ロビーへ戻る</button>
+                <button type="button" class="btn-primary" id="btn-back-waiting">⚙️ ルーム設定画面に戻る</button>
+              `
+              : `<button type="button" class="btn-primary" id="btn-back-lobby">🚪 ロビーへ戻る</button>`
           )}
         </div>
       </div>
     `;
 
     document.getElementById('btn-next-round')?.addEventListener('click', () => {
+      modalOverlay.classList.add('hidden');
+      modalOverlay.innerHTML = '';
       window.MaigoGameEngine.proceedFromRoundEnd(this.gameState);
       this.syncGameState();
     });
     document.getElementById('btn-back-waiting')?.addEventListener('click', () => {
+      this.closeAllGameOverlays();
+      this.gameState = null;
       if (this.roomData) {
         this.roomData.status = 'WAITING';
         this.roomData.gameState = null;
         this.syncRoomData();
         this.showScreen('waiting-screen');
+        this.renderWaitingRoom();
       } else {
-        this.leaveRoom();
+        this.leaveRoom(true);
       }
     });
     document.getElementById('btn-back-lobby')?.addEventListener('click', () => {
-      this.leaveRoom();
+      this.closeAllGameOverlays();
+      this.leaveRoom(true);
     });
   }
 
@@ -2036,16 +2249,32 @@ class MaigoApp {
     if (pile.length === 0) {
       body.innerHTML = `<div class="empty-rooms-msg">現在、捨て札はありません（0枚）</div>`;
     } else {
-      body.innerHTML = `<div class="modal-cards-grid">${pile.map(c => {
-        const def = window.MAIGO_CARDS[c.cardId];
-        return `
-          <div class="modal-pick-card ${def.category}">
-            <div class="mpc-title">${def.name}</div>
-            <div class="mpc-art">${window.getCardIllustrationSVG(def.id)}</div>
-            <div class="mpc-cat">${def.categoryLabel}</div>
-          </div>
+      let selectedDiscardUid = pile[pile.length - 1].uid;
+      const renderDiscardBody = () => {
+        const selectedObj = pile.find(c => c.uid === selectedDiscardUid) || pile[pile.length - 1];
+        body.innerHTML = `
+          <div class="modal-desc">カードをタップすると下に効果の詳細が表示されます。</div>
+          <div class="modal-cards-grid scrollable-grid">${pile.map(c => {
+            const def = window.MAIGO_CARDS[c.cardId];
+            const isSel = selectedObj && selectedObj.uid === c.uid;
+            return `
+              <button type="button" class="modal-pick-card ${def.category} ${isSel ? 'selected' : ''}" data-disc-inspect-uid="${c.uid}">
+                <div class="mpc-art">${window.getCardIllustrationSVG(def.id)}</div>
+                <div class="mpc-title">${def.name}</div>
+                <div class="mpc-cat">${def.categoryLabel}</div>
+              </button>
+            `;
+          }).join('')}</div>
+          ${this.renderCardEffectPreviewBoxHTML(selectedObj)}
         `;
-      }).join('')}</div>`;
+        body.querySelectorAll('[data-disc-inspect-uid]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            selectedDiscardUid = btn.dataset.discInspectUid;
+            renderDiscardBody();
+          });
+        });
+      };
+      renderDiscardBody();
     }
     modal.classList.remove('hidden');
   }
@@ -2080,6 +2309,9 @@ class MaigoApp {
   }
 
   showScreen(screenId) {
+    if (screenId !== 'game-screen') {
+      this.closeAllGameOverlays();
+    }
     ['lobby-screen', 'waiting-screen', 'game-screen'].forEach(id => {
       const el = document.getElementById(id);
       if (el) {
